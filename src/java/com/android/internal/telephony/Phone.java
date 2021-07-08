@@ -1869,6 +1869,17 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     }
 
     /**
+     * Check whether the radio is off for thermal reason.
+     *
+     * @return {@code true} only if thermal mitigation is one of the reason for which radio is off.
+     */
+    public boolean isRadioOffForThermalMitigation() {
+        ServiceStateTracker sst = getServiceStateTracker();
+        return sst != null && sst.getRadioPowerOffReasons()
+                .contains(Phone.RADIO_POWER_REASON_THERMAL);
+    }
+
+    /**
      * Retrieves the EmergencyNumberTracker of the phone instance.
      */
     public EmergencyNumberTracker getEmergencyNumberTracker() {
@@ -4659,6 +4670,15 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
         return null;
     }
 
+    /**
+     * Phone number of the current subscriber given by the IMS implementation.
+     * Applicable only on IMS; used in absence of line1number.
+     * @return phone number from SIP URIs aliased to the current subscriber
+     */
+    public String getSubscriberUriNumber() {
+        return null;
+    }
+
     public AppSmsManager getAppSmsManager() {
         return mAppSmsManager;
     }
@@ -4859,6 +4879,13 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
      */
     public void getSlicingConfig(Message response) {
         mCi.getSlicingConfig(response);
+    }
+
+    /**
+     * Returns the InboundSmsHandler object for this phone
+     */
+    public InboundSmsHandler getInboundSmsHandler(boolean is3gpp2) {
+        return null;
     }
 
     public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {

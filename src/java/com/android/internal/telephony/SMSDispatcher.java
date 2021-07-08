@@ -163,6 +163,12 @@ public abstract class SMSDispatcher extends Handler {
     protected static final int SEND_RETRY_DELAY = 2000;
     /** Message sending queue limit */
     private static final int MO_MSG_QUEUE_LIMIT = 5;
+    /** SMS anomaly uuid -- CarrierMessagingService did not respond */
+    private static final UUID sAnomalyNoResponseFromCarrierMessagingService =
+            UUID.fromString("279d9fbc-462d-4fc2-802c-bf21ddd9dd90");
+    /** SMS anomaly uuid -- CarrierMessagingService unexpected callback */
+    private static final UUID sAnomalyUnexpectedCallback =
+            UUID.fromString("0103b6d2-ad07-4d86-9102-14341b9074ef");
 
     /**
      * Message reference for a CONCATENATED_8_BIT_REFERENCE or
@@ -356,45 +362,62 @@ public abstract class SMSDispatcher extends Handler {
      */
     protected abstract class SmsSender extends Handler {
         private static final int EVENT_TIMEOUT = 1;
-        protected final SmsTracker mTracker;
         // Initialized in sendSmsByCarrierApp
-        protected volatile SmsSenderCallback mSenderCallback;
+        protected volatile CarrierMessagingCallback mSenderCallback;
         protected final CarrierMessagingServiceWrapper mCarrierMessagingServiceWrapper =
                 new CarrierMessagingServiceWrapper();
         private String mCarrierPackageName;
 
-        protected SmsSender(SmsTracker tracker) {
+        protected SmsSender() {
             super(Looper.getMainLooper());
-            mTracker = tracker;
         }
 
+        /**
+         * Bind to carrierPackageName to send message through it
+         */
         public void sendSmsByCarrierApp(String carrierPackageName,
-                                        SmsSenderCallback senderCallback) {
+                CarrierMessagingCallback senderCallback) {
             mCarrierPackageName = carrierPackageName;
             mSenderCallback = senderCallback;
             if (!mCarrierMessagingServiceWrapper.bindToCarrierMessagingService(
                     mContext, carrierPackageName, runnable -> runnable.run(),
                     ()->onServiceReady())) {
                 Rlog.e(TAG, "bindService() for carrier messaging service failed");
-                mSenderCallback.onSendSmsComplete(
-                        CarrierMessagingService.SEND_STATUS_RETRY_ON_CARRIER_NETWORK,
-                        0 /* messageRef */);
+                onSendComplete(CarrierMessagingService.SEND_STATUS_RETRY_ON_CARRIER_NETWORK);
             } else {
                 Rlog.d(TAG, "bindService() for carrier messaging service succeeded");
                 sendMessageDelayed(obtainMessage(EVENT_TIMEOUT), mCarrierMessagingTimeout);
             }
         }
 
+        /**
+         * Callback received from mCarrierPackageName on binding to it is done
+         */
         public abstract void onServiceReady();
+
+        /**
+         * Method to call message send callback with passed in result and default parameters
+         */
+        public abstract void onSendComplete(@CarrierMessagingService.SendResult int result);
+
+        /**
+         * Used to get the SmsTracker for single part messages
+         */
+        public abstract SmsTracker getSmsTracker();
+
+        /**
+         * Used to get the SmsTrackers for multi part messages
+         */
+        public abstract SmsTracker[] getSmsTrackers();
 
         @Override
         public void handleMessage(Message msg) {
             if (msg.what == EVENT_TIMEOUT) {
                 logWithLocalLog("handleMessage: did not receive response from "
                         + mCarrierPackageName + " for " + mCarrierMessagingTimeout + " ms");
-                mSenderCallback.onSendSmsComplete(
-                        CarrierMessagingService.SEND_STATUS_RETRY_ON_CARRIER_NETWORK,
-                        0 /* messageRef */);
+                AnomalyReporter.reportAnomaly(sAnomalyNoResponseFromCarrierMessagingService,
+                        "No response from " + mCarrierPackageName);
+                onSendComplete(CarrierMessagingService.SEND_STATUS_RETRY_ON_CARRIER_NETWORK);
             } else {
                 logWithLocalLog("handleMessage: received unexpected message " + msg.what);
             }
@@ -414,8 +437,10 @@ public abstract class SMSDispatcher extends Handler {
      * Use the carrier messaging service to send a text SMS.
      */
     protected final class TextSmsSender extends SmsSender {
+        private final SmsTracker mTracker;
         public TextSmsSender(SmsTracker tracker) {
-            super(tracker);
+            super();
+            mTracker = tracker;
         }
 
         @Override
@@ -436,15 +461,27 @@ public abstract class SMSDispatcher extends Handler {
                             mSenderCallback);
                 } catch (RuntimeException e) {
                     Rlog.e(TAG, "Exception sending the SMS: " + e.getMessage());
-                    mSenderCallback.onSendSmsComplete(
-                            CarrierMessagingService.SEND_STATUS_RETRY_ON_CARRIER_NETWORK,
-                            0 /* messageRef */);
+                    onSendComplete(CarrierMessagingService.SEND_STATUS_RETRY_ON_CARRIER_NETWORK);
                 }
             } else {
-                mSenderCallback.onSendSmsComplete(
-                        CarrierMessagingService.SEND_STATUS_RETRY_ON_CARRIER_NETWORK,
-                        0 /* messageRef */);
+                onSendComplete(CarrierMessagingService.SEND_STATUS_RETRY_ON_CARRIER_NETWORK);
             }
+        }
+
+        @Override
+        public void onSendComplete(int result) {
+            mSenderCallback.onSendSmsComplete(result, 0 /* messageRef */);
+        }
+
+        @Override
+        public SmsTracker getSmsTracker() {
+            return mTracker;
+        }
+
+        @Override
+        public SmsTracker[] getSmsTrackers() {
+            Rlog.e(TAG, "getSmsTrackers: Unexpected call for TextSmsSender");
+            return null;
         }
     }
 
@@ -452,8 +489,10 @@ public abstract class SMSDispatcher extends Handler {
      * Use the carrier messaging service to send a data SMS.
      */
     protected final class DataSmsSender extends SmsSender {
+        private final SmsTracker mTracker;
         public DataSmsSender(SmsTracker tracker) {
-            super(tracker);
+            super();
+            mTracker = tracker;
         }
 
         @Override
@@ -477,15 +516,27 @@ public abstract class SMSDispatcher extends Handler {
                 } catch (RuntimeException e) {
                     Rlog.e(TAG, "Exception sending the SMS: " + e
                             + " " + SmsController.formatCrossStackMessageId(mTracker.mMessageId));
-                    mSenderCallback.onSendSmsComplete(
-                            CarrierMessagingService.SEND_STATUS_RETRY_ON_CARRIER_NETWORK,
-                            0 /* messageRef */);
+                    onSendComplete(CarrierMessagingService.SEND_STATUS_RETRY_ON_CARRIER_NETWORK);
                 }
             } else {
-                mSenderCallback.onSendSmsComplete(
-                        CarrierMessagingService.SEND_STATUS_RETRY_ON_CARRIER_NETWORK,
-                        0 /* messageRef */);
+                onSendComplete(CarrierMessagingService.SEND_STATUS_RETRY_ON_CARRIER_NETWORK);
             }
+        }
+
+        @Override
+        public void onSendComplete(int result) {
+            mSenderCallback.onSendSmsComplete(result, 0 /* messageRef */);
+        }
+
+        @Override
+        public SmsTracker getSmsTracker() {
+            return mTracker;
+        }
+
+        @Override
+        public SmsTracker[] getSmsTrackers() {
+            Rlog.e(TAG, "getSmsTrackers: Unexpected call for DataSmsSender");
+            return null;
         }
     }
 
@@ -495,6 +546,7 @@ public abstract class SMSDispatcher extends Handler {
      */
     protected final class SmsSenderCallback implements CarrierMessagingCallback {
         private final SmsSender mSmsSender;
+        private boolean mCallbackCalled = false;
 
         public SmsSenderCallback(SmsSender smsSender) {
             mSmsSender = smsSender;
@@ -505,10 +557,17 @@ public abstract class SMSDispatcher extends Handler {
          */
         @Override
         public void onSendSmsComplete(int result, int messageRef) {
+            if (mCallbackCalled) {
+                logWithLocalLog("onSendSmsComplete: unexpected call");
+                AnomalyReporter.reportAnomaly(sAnomalyUnexpectedCallback,
+                        "Unexpected onSendSmsComplete");
+                return;
+            }
+            mCallbackCalled = true;
             final long identity = Binder.clearCallingIdentity();
             try {
                 mSmsSender.mCarrierMessagingServiceWrapper.disconnect();
-                processSendSmsResponse(mSmsSender.mTracker, result, messageRef);
+                processSendSmsResponse(mSmsSender.getSmsTracker(), result, messageRef);
                 mSmsSender.removeTimeout();
             } finally {
                 Binder.restoreCallingIdentity(identity);
@@ -580,15 +639,12 @@ public abstract class SMSDispatcher extends Handler {
     /**
      * Use the carrier messaging service to send a multipart text SMS.
      */
-    private final class MultipartSmsSender {
+    private final class MultipartSmsSender extends SmsSender {
         private final List<String> mParts;
         public final SmsTracker[] mTrackers;
-        // Initialized in sendSmsByCarrierApp
-        private volatile MultipartSmsSenderCallback mSenderCallback;
-        private final CarrierMessagingServiceWrapper mCarrierMessagingServiceWrapper =
-                new CarrierMessagingServiceWrapper();
 
         MultipartSmsSender(ArrayList<String> parts, SmsTracker[] trackers) {
+            super();
             mParts = parts;
             mTrackers = trackers;
         }
@@ -596,20 +652,11 @@ public abstract class SMSDispatcher extends Handler {
         @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
         void sendSmsByCarrierApp(String carrierPackageName,
                                  MultipartSmsSenderCallback senderCallback) {
-            mSenderCallback = senderCallback;
-            if (!mCarrierMessagingServiceWrapper.bindToCarrierMessagingService(
-                    mContext, carrierPackageName, runnable -> runnable.run(),
-                    ()->onServiceReady())) {
-                Rlog.e(TAG, "bindService() for carrier messaging service failed");
-                mSenderCallback.onSendMultipartSmsComplete(
-                        CarrierMessagingService.SEND_STATUS_RETRY_ON_CARRIER_NETWORK,
-                        null /* messageRefs */);
-            } else {
-                Rlog.d(TAG, "bindService() for carrier messaging service succeeded");
-            }
+            super.sendSmsByCarrierApp(carrierPackageName, senderCallback);
         }
 
-        private void onServiceReady() {
+        @Override
+        public void onServiceReady() {
             boolean statusReportRequested = false;
             for (SmsTracker tracker : mTrackers) {
                 if (tracker.mDeliveryIntent != null) {
@@ -630,10 +677,24 @@ public abstract class SMSDispatcher extends Handler {
                         mSenderCallback);
             } catch (RuntimeException e) {
                 Rlog.e(TAG, "Exception sending the SMS: " + e);
-                mSenderCallback.onSendMultipartSmsComplete(
-                        CarrierMessagingService.SEND_STATUS_RETRY_ON_CARRIER_NETWORK,
-                        null /* messageRefs */);
+                onSendComplete(CarrierMessagingService.SEND_STATUS_RETRY_ON_CARRIER_NETWORK);
             }
+        }
+
+        @Override
+        public void onSendComplete(int result) {
+            mSenderCallback.onSendMultipartSmsComplete(result, null /* messageRefs */);
+        }
+
+        @Override
+        public SmsTracker getSmsTracker() {
+            Rlog.e(TAG, "getSmsTracker: Unexpected call for MultipartSmsSender");
+            return null;
+        }
+
+        @Override
+        public SmsTracker[] getSmsTrackers() {
+            return mTrackers;
         }
     }
 
@@ -643,6 +704,7 @@ public abstract class SMSDispatcher extends Handler {
      */
     private final class MultipartSmsSenderCallback implements CarrierMessagingCallback {
         private final MultipartSmsSender mSmsSender;
+        private boolean mCallbackCalled = false;
 
         MultipartSmsSenderCallback(MultipartSmsSender smsSender) {
             mSmsSender = smsSender;
@@ -658,6 +720,14 @@ public abstract class SMSDispatcher extends Handler {
          */
         @Override
         public void onSendMultipartSmsComplete(int result, int[] messageRefs) {
+            if (mCallbackCalled) {
+                logWithLocalLog("onSendMultipartSmsComplete: unexpected call");
+                AnomalyReporter.reportAnomaly(sAnomalyUnexpectedCallback,
+                        "Unexpected onSendMultipartSmsComplete");
+                return;
+            }
+            mCallbackCalled = true;
+            mSmsSender.removeTimeout();
             mSmsSender.mCarrierMessagingServiceWrapper.disconnect();
 
             if (mSmsSender.mTrackers == null) {
@@ -1997,8 +2067,9 @@ public abstract class SMSDispatcher extends Handler {
 
         private Boolean mIsFromDefaultSmsApplication;
 
-        // SMS anomaly uuid
-        private final UUID mAnomalyUUID = UUID.fromString("43043600-ea7a-44d2-9ae6-a58567ac7886");
+        // SMS anomaly uuid -- unexpected error from RIL
+        private final UUID mAnomalyUnexpectedErrorFromRilUUID =
+                UUID.fromString("43043600-ea7a-44d2-9ae6-a58567ac7886");
 
         private SmsTracker(HashMap<String, Object> data, PendingIntent sentIntent,
                 PendingIntent deliveryIntent, PackageInfo appInfo, String destAddr, String format,
@@ -2235,8 +2306,9 @@ public abstract class SMSDispatcher extends Handler {
         private UUID generateUUID(int error, int errorCode) {
             long lerror = error;
             long lerrorCode = errorCode;
-            return new UUID(mAnomalyUUID.getMostSignificantBits(),
-                    mAnomalyUUID.getLeastSignificantBits() + ((lerrorCode << 32) + lerror));
+            return new UUID(mAnomalyUnexpectedErrorFromRilUUID.getMostSignificantBits(),
+                    mAnomalyUnexpectedErrorFromRilUUID.getLeastSignificantBits()
+                            + ((lerrorCode << 32) + lerror));
         }
 
         /**
@@ -2482,9 +2554,9 @@ public abstract class SMSDispatcher extends Handler {
         if (carrierPackages != null && carrierPackages.size() == 1) {
             return carrierPackages.get(0);
         }
-        // If there is no carrier package which implements CarrierMessagingService, then lookup if
-        // for a carrierImsPackage that implements CarrierMessagingService.
-        return CarrierSmsUtils.getCarrierImsPackageForIntent(mContext, mPhone,
+        // If there is no carrier package which implements CarrierMessagingService, then lookup
+        // an ImsService implementing RCS that also implements CarrierMessagingService.
+        return CarrierSmsUtils.getImsRcsPackageForIntent(mContext, mPhone,
                 new Intent(CarrierMessagingService.SERVICE_INTERFACE));
     }
 

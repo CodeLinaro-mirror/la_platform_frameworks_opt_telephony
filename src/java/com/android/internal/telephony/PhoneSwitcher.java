@@ -101,7 +101,7 @@ public class PhoneSwitcher extends Handler {
     protected static final boolean VDBG = false;
 
     private static final int DEFAULT_NETWORK_CHANGE_TIMEOUT_MS = 5000;
-    private static final int MODEM_COMMAND_RETRY_PERIOD_MS     = 5000;
+    protected static final int MODEM_COMMAND_RETRY_PERIOD_MS     = 5000;
     // After the emergency call ends, wait for a few seconds to see if we enter ECBM before starting
     // the countdown to remove the emergency DDS override.
     @VisibleForTesting
@@ -121,7 +121,7 @@ public class PhoneSwitcher extends Handler {
      * call to allow for carrier specific operations, such as provide SUPL updates during or after
      * the emergency call, since some modems do not support these operations on the non DDS.
      */
-    private static final class EmergencyOverrideRequest {
+    protected static final class EmergencyOverrideRequest {
         /* The Phone ID that the DDS should be set to. */
         int mPhoneId = INVALID_PHONE_INDEX;
         /* The time after the emergency call ends that the DDS should be overridden for. */
@@ -152,7 +152,7 @@ public class PhoneSwitcher extends Handler {
         /**
          * Send the override complete callback the result of setting the DDS to the new value.
          */
-        void sendOverrideCompleteCallbackResultAndClear(boolean result) {
+        public void sendOverrideCompleteCallbackResultAndClear(boolean result) {
             if (isCallbackAvailable()) {
                 mOverrideCompleteFuture.complete(result);
                 mOverrideCompleteFuture = null;
@@ -241,7 +241,7 @@ public class PhoneSwitcher extends Handler {
     // If non-null, An emergency call is about to be started, is ongoing, or has just ended and we
     // are overriding the DDS.
     // Internal state, should ONLY be accessed/modified inside of the handler.
-    private EmergencyOverrideRequest mEmergencyOverride;
+    protected EmergencyOverrideRequest mEmergencyOverride;
 
     private ISetOpportunisticDataCallback mSetOpptSubCallback;
 
@@ -266,7 +266,7 @@ public class PhoneSwitcher extends Handler {
     private static final int EVENT_NETWORK_VALIDATION_DONE        = 110;
     private static final int EVENT_REMOVE_DEFAULT_NETWORK_CHANGE_CALLBACK = 111;
     private static final int EVENT_MODEM_COMMAND_DONE             = 112;
-    private static final int EVENT_MODEM_COMMAND_RETRY            = 113;
+    protected static final int EVENT_MODEM_COMMAND_RETRY            = 113;
     @VisibleForTesting
     public static final int EVENT_DATA_ENABLED_CHANGED            = 114;
     // An emergency call is about to be originated and requires the DDS to be overridden.
@@ -308,7 +308,7 @@ public class PhoneSwitcher extends Handler {
     private ConnectivityManager mConnectivityManager;
     private int mImsRegistrationTech = REGISTRATION_TECH_NONE;
 
-    private List<Set<CommandException.Error>> mCurrentDdsSwitchFailure;
+    protected List<Set<CommandException.Error>> mCurrentDdsSwitchFailure;
 
     private class DefaultNetworkCallback extends ConnectivityManager.NetworkCallback {
         public int mExpectedSubId = SubscriptionManager.INVALID_SUBSCRIPTION_ID;
@@ -565,7 +565,7 @@ public class PhoneSwitcher extends Handler {
         }
     };
 
-    private boolean isSimApplicationReady(int slotIndex) {
+    protected boolean isSimApplicationReady(int slotIndex) {
         if (!SubscriptionManager.isValidSlotIndex(slotIndex)) {
             return false;
         }
@@ -724,16 +724,7 @@ public class PhoneSwitcher extends Handler {
             }
             case EVENT_MODEM_COMMAND_DONE: {
                 AsyncResult ar = (AsyncResult) msg.obj;
-                boolean commandSuccess = ar != null && ar.exception == null;
-                if (mEmergencyOverride != null) {
-                    log("Emergency override result sent = " + commandSuccess);
-                    mEmergencyOverride.sendOverrideCompleteCallbackResultAndClear(commandSuccess);
-                    // Do not retry , as we do not allow changes in onEvaluate during an emergency
-                    // call. When the call ends, we will start the countdown to remove the override.
-                } else {
-                    int phoneId = (int) ar.userObj;
-                    onDdsSwitchResponse(ar, phoneId);
-                }
+                onDdsSwitchResponse(ar);
                 break;
             }
             case EVENT_MODEM_COMMAND_RETRY: {
@@ -833,10 +824,13 @@ public class PhoneSwitcher extends Handler {
 
         mPhoneSubscriptions = copyOf(mPhoneSubscriptions, mActiveModemCount);
         mPhoneStates = copyOf(mPhoneStates, mActiveModemCount);
-        //clear the list in case of multisim config change
-        mCurrentDdsSwitchFailure.clear();
 
-        // Single SIM -> dual SIM switch.
+        // Dual SIM -> Single SIM switch.
+        for (int phoneId = oldActiveModemCount - 1; phoneId >= mActiveModemCount; phoneId--) {
+            mCurrentDdsSwitchFailure.remove(phoneId);
+        }
+
+        // Single SIM -> Dual SIM switch.
         for (int phoneId = oldActiveModemCount; phoneId < mActiveModemCount; phoneId++) {
             mPhoneStates[phoneId] = new PhoneState();
             Phone phone = PhoneFactory.getPhone(phoneId);
@@ -1043,6 +1037,9 @@ public class PhoneSwitcher extends Handler {
         // Check if phoneId for preferred data is changed.
         int oldPreferredDataPhoneId = mPreferredDataPhoneId;
 
+        // Check if subId for preferred data is changed.
+        int oldPreferredDataSubId = mPreferredDataSubId.get();
+
         // When there are no subscriptions, the preferred data phone ID is invalid, but we want
         // to keep a valid phoneId for Emergency, so skip logic that updates for preferred data
         // phone ID. Ideally there should be a single set of checks that evaluate the correct
@@ -1054,6 +1051,10 @@ public class PhoneSwitcher extends Handler {
             sb.append(" preferred phoneId ").append(oldPreferredDataPhoneId)
                     .append("->").append(mPreferredDataPhoneId);
             diffDetected = true;
+        } else if (oldPreferredDataSubId != mPreferredDataSubId.get()) {
+            log("SIM refresh, notify dds change");
+            // Inform connectivity about the active data phone
+            notifyPreferredDataSubIdChanged();
         }
 
         if (diffDetected) {
@@ -1203,7 +1204,8 @@ public class PhoneSwitcher extends Handler {
                 PhoneFactory.getPhone(phoneId).mCi.setDataAllowed(isPhoneActive(phoneId), message);
             }
         } else if (phoneId == mPreferredDataPhoneId) {
-            // Only setPreferredDataModem if the phoneId equals to current mPreferredDataPhoneId.
+            // Only setPreferredDataModem if the phoneId equals to current mPreferredDataPhoneId
+            log("sendRilCommands: setPreferredDataModem - phoneId: " + phoneId);
             mRadioConfig.setPreferredDataModem(mPreferredDataPhoneId, message);
         }
     }
@@ -1633,14 +1635,21 @@ public class PhoneSwitcher extends Handler {
         pw.decreaseIndent();
     }
 
-    private boolean isAnyVoiceCallActiveOnDevice() {
+    protected boolean isAnyVoiceCallActiveOnDevice() {
         boolean ret = mPhoneIdInVoiceCall != SubscriptionManager.INVALID_PHONE_INDEX;
         log("isAnyVoiceCallActiveOnDevice: " + ret);
         return ret;
     }
 
-    private void onDdsSwitchResponse(AsyncResult ar, int phoneId) {
-        if (ar.exception != null) {
+    protected void onDdsSwitchResponse(AsyncResult ar) {
+        boolean commandSuccess = ar != null && ar.exception == null;
+        int phoneId = (int) ar.userObj;
+        if (mEmergencyOverride != null) {
+            log("Emergency override result sent = " + commandSuccess);
+            mEmergencyOverride.sendOverrideCompleteCallbackResultAndClear(commandSuccess);
+            // Do not retry , as we do not allow changes in onEvaluate during an emergency
+            // call. When the call ends, we will start the countdown to remove the override.
+        } else if (!commandSuccess) {
             log("onDdsSwitchResponse: DDS switch failed. with exception " + ar.exception);
             if (ar.exception instanceof CommandException) {
                 CommandException.Error error = ((CommandException)
@@ -1656,17 +1665,16 @@ public class PhoneSwitcher extends Handler {
                     return;
                 }
             }
-
             log("onDdsSwitchResponse: Scheduling DDS switch retry");
             sendMessageDelayed(Message.obtain(this, EVENT_MODEM_COMMAND_RETRY,
                         phoneId), MODEM_COMMAND_RETRY_PERIOD_MS);
-        } else {
-            log("onDdsSwitchResponse: DDS switch success on phoneId = " + phoneId);
-            mCurrentDdsSwitchFailure.get(phoneId).clear();
-            // Notify all registrants
-            mActivePhoneRegistrants.notifyRegistrants();
-            notifyPreferredDataSubIdChanged();
+            return;
         }
+        if (commandSuccess) log("onDdsSwitchResponse: DDS switch success on phoneId = " + phoneId);
+        mCurrentDdsSwitchFailure.get(phoneId).clear();
+        // Notify all registrants
+        mActivePhoneRegistrants.notifyRegistrants();
+        notifyPreferredDataSubIdChanged();
     }
 
     private boolean isPhoneIdValidForRetry(int phoneId) {
@@ -1679,8 +1687,7 @@ public class PhoneSwitcher extends Handler {
             if (mPrioritizedDcRequests.size() == 0) {
                 return false;
             }
-            for (int i = 0; i < mMaxDataAttachModemCount; i++) {
-                DcRequest dcRequest = mPrioritizedDcRequests.get(i);
+            for (DcRequest dcRequest : mPrioritizedDcRequests) {
                 if (dcRequest != null) {
                     phoneIdForRequest = phoneIdForRequest(dcRequest.networkRequest);
                     if (phoneIdForRequest == phoneId) {

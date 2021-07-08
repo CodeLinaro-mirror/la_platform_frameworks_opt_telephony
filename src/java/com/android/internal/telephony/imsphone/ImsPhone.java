@@ -1498,6 +1498,12 @@ public class ImsPhone extends ImsPhoneBase {
                         isUssdRequest,
                         this);
                 onNetworkInitiatedUssd(mmi);
+        } else if (isUssdError) {
+            ImsPhoneMmiCode mmi;
+            mmi = ImsPhoneMmiCode.newNetworkInitiatedUssd(ussdMessage,
+                    true,
+                    this);
+            mmi.onUssdFinishedError();
         }
     }
 
@@ -1640,6 +1646,40 @@ public class ImsPhone extends ImsPhoneBase {
     @Override
     public String getLine1Number() {
         return mDefaultPhone.getLine1Number();
+    }
+
+    @Override
+    public String getSubscriberUriNumber() {
+        if (mCurrentSubscriberUris == null || mCurrentSubscriberUris.length == 0) {
+            logd("mCurrentSubscriberUris is null");
+            return null;
+        }
+        for (Uri currentSubscriberUri : mCurrentSubscriberUris) {
+            if (currentSubscriberUri == null) {
+                continue;
+            }
+            String number = extractPhoneNumber(currentSubscriberUri);
+            if (number != null) {
+                return number;
+            }
+        }
+        return null;
+    }
+
+    private String extractPhoneNumber(Uri uri) {
+        // Number is always in the scheme specific part, regardless of whether this is a TEL or SIP
+        // URI.
+        String number = uri.getSchemeSpecificPart();
+        if (number == null) {
+            return null;
+        }
+        String[] numberParts = number.split("[@;:]");
+
+        if (numberParts.length == 0) {
+            logi("extractPhoneNumber(N) : no number in uri");
+            return null;
+        }
+        return numberParts[0];
     }
 
     /**
