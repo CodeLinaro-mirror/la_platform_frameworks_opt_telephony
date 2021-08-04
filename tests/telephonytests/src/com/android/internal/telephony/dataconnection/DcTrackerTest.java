@@ -58,6 +58,7 @@ import android.net.NetworkPolicyManager;
 import android.net.NetworkRequest;
 import android.net.Uri;
 import android.os.AsyncResult;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
@@ -68,7 +69,9 @@ import android.provider.Settings;
 import android.provider.Telephony;
 import android.telephony.AccessNetworkConstants;
 import android.telephony.AccessNetworkConstants.AccessNetworkType;
+import android.telephony.Annotation;
 import android.telephony.CarrierConfigManager;
+import android.telephony.DataFailCause;
 import android.telephony.NetworkRegistrationInfo;
 import android.telephony.PreciseDataConnectionState;
 import android.telephony.ServiceState;
@@ -79,6 +82,7 @@ import android.telephony.SubscriptionPlan;
 import android.telephony.TelephonyDisplayInfo;
 import android.telephony.TelephonyManager;
 import android.telephony.data.ApnSetting;
+import android.telephony.data.DataCallResponse;
 import android.telephony.data.DataProfile;
 import android.telephony.data.DataService;
 import android.telephony.data.TrafficDescriptor;
@@ -816,6 +820,18 @@ public class DcTrackerTest extends TelephonyTest {
         }
     }
 
+    private void addHandoverCompleteMsg(Message onCompleteMsg,
+            @Annotation.ApnType int apnType) {
+        try {
+            Method method = DcTracker.class.getDeclaredMethod("addHandoverCompleteMsg",
+                    Message.class, int.class);
+            method.setAccessible(true);
+            method.invoke(mDct, onCompleteMsg, apnType);
+        } catch (Exception e) {
+            fail(e.toString());
+        }
+    }
+
     private void sendInitializationEvents() {
         sendCarrierConfigChanged("");
 
@@ -1063,6 +1079,77 @@ public class DcTrackerTest extends TelephonyTest {
                 anyInt(), any(), any(), anyBoolean(), any(Message.class));
         assertEquals(DctConstants.State.IDLE, mDct.getState(ApnSetting.TYPE_DEFAULT_STRING));
         assertEquals(DctConstants.State.CONNECTED, mDct.getState(ApnSetting.TYPE_MMS_STRING));
+    }
+
+    @Test
+    @MediumTest
+    public void testTrySetupDataMmsAlwaysAllowedDataDisabled() {
+        mBundle.putStringArray(CarrierConfigManager.KEY_CARRIER_METERED_APN_TYPES_STRINGS,
+                new String[]{ApnSetting.TYPE_DEFAULT_STRING, ApnSetting.TYPE_MMS_STRING});
+        mApnSettingContentProvider.setFakeApn1Types("mms,xcap,default");
+        mDct.enableApn(ApnSetting.TYPE_MMS, DcTracker.REQUEST_TYPE_NORMAL, null);
+        sendInitializationEvents();
+
+        // Verify MMS was set up and is connected
+        ArgumentCaptor<DataProfile> dpCaptor = ArgumentCaptor.forClass(DataProfile.class);
+        verify(mSimulatedCommandsVerifier).setupDataCall(
+                eq(AccessNetworkType.EUTRAN), dpCaptor.capture(),
+                eq(false), eq(false), eq(DataService.REQUEST_REASON_NORMAL), any(),
+                anyInt(), any(), any(), anyBoolean(), any(Message.class));
+        verifyDataProfile(dpCaptor.getValue(), FAKE_APN1, 0,
+                ApnSetting.TYPE_MMS | ApnSetting.TYPE_XCAP | ApnSetting.TYPE_DEFAULT,
+                1, NETWORK_TYPE_LTE_BITMASK);
+        assertEquals(DctConstants.State.CONNECTED, mDct.getState(ApnSetting.TYPE_MMS_STRING));
+
+        // Verify DC has all capabilities specified in fakeApn1Types
+        Map<Integer, ApnContext> apnContexts = mDct.getApnContexts().stream().collect(
+                Collectors.toMap(ApnContext::getApnTypeBitmask, x -> x));
+        assertTrue(apnContexts.get(ApnSetting.TYPE_MMS).getDataConnection()
+                .getNetworkCapabilities().hasCapability(NetworkCapabilities.NET_CAPABILITY_MMS));
+        assertTrue(apnContexts.get(ApnSetting.TYPE_MMS).getDataConnection()
+                .getNetworkCapabilities().hasCapability(NetworkCapabilities.NET_CAPABILITY_XCAP));
+        assertTrue(apnContexts.get(ApnSetting.TYPE_MMS).getDataConnection()
+                .getNetworkCapabilities().hasCapability(
+                        NetworkCapabilities.NET_CAPABILITY_INTERNET));
+
+        // Disable mobile data
+        doReturn(false).when(mDataEnabledSettings).isDataEnabled();
+        doReturn(false).when(mDataEnabledSettings).isDataEnabled(anyInt());
+        doReturn(false).when(mDataEnabledSettings).isMmsAlwaysAllowed();
+        mDct.obtainMessage(DctConstants.EVENT_DATA_ENABLED_OVERRIDE_RULES_CHANGED).sendToTarget();
+        waitForLastHandlerAction(mDcTrackerTestHandler.getThreadHandler());
+
+        // Expected tear down all metered DataConnections
+        waitForMs(200);
+        verify(mSimulatedCommandsVerifier).deactivateDataCall(
+                anyInt(), eq(DataService.REQUEST_REASON_NORMAL), any(Message.class));
+        assertEquals(DctConstants.State.IDLE, mDct.getState(ApnSetting.TYPE_MMS_STRING));
+
+        // Allow MMS unconditionally
+        clearInvocations(mSimulatedCommandsVerifier);
+        doReturn(true).when(mDataEnabledSettings).isMmsAlwaysAllowed();
+        doReturn(true).when(mDataEnabledSettings).isDataEnabled(ApnSetting.TYPE_MMS);
+        mDct.obtainMessage(DctConstants.EVENT_DATA_ENABLED_OVERRIDE_RULES_CHANGED).sendToTarget();
+        waitForLastHandlerAction(mDcTrackerTestHandler.getThreadHandler());
+
+        // Verify MMS was set up and is connected
+        waitForMs(200);
+        verify(mSimulatedCommandsVerifier).setupDataCall(
+                eq(AccessNetworkType.EUTRAN), dpCaptor.capture(),
+                eq(false), eq(false), eq(DataService.REQUEST_REASON_NORMAL), any(),
+                anyInt(), any(), any(), anyBoolean(), any(Message.class));
+        assertEquals(DctConstants.State.CONNECTED, mDct.getState(ApnSetting.TYPE_MMS_STRING));
+
+        // Ensure MMS data connection has the MMS capability only.
+        apnContexts = mDct.getApnContexts().stream().collect(
+                Collectors.toMap(ApnContext::getApnTypeBitmask, x -> x));
+        assertTrue(apnContexts.get(ApnSetting.TYPE_MMS).getDataConnection()
+                .getNetworkCapabilities().hasCapability(NetworkCapabilities.NET_CAPABILITY_MMS));
+        assertFalse(apnContexts.get(ApnSetting.TYPE_MMS).getDataConnection()
+                .getNetworkCapabilities().hasCapability(NetworkCapabilities.NET_CAPABILITY_XCAP));
+        assertFalse(apnContexts.get(ApnSetting.TYPE_MMS).getDataConnection()
+                .getNetworkCapabilities().hasCapability(
+                        NetworkCapabilities.NET_CAPABILITY_INTERNET));
     }
 
     @Test
@@ -2764,6 +2851,7 @@ public class DcTrackerTest extends TelephonyTest {
         doReturn(mApnContext).when(apnContextsByType).get(eq(ApnSetting.TYPE_IMS));
         doReturn(mApnContext).when(apnContexts).get(eq(ApnSetting.TYPE_IMS_STRING));
         doReturn(false).when(mApnContext).isConnectable();
+        doReturn(false).when(mDataEnabledSettings).isDataEnabled(anyInt());
         doReturn(DctConstants.State.DISCONNECTING).when(mApnContext).getState();
         replaceInstance(DcTracker.class, "mApnContextsByType", mDct, apnContextsByType);
         replaceInstance(DcTracker.class, "mApnContexts", mDct, apnContexts);
@@ -2785,6 +2873,7 @@ public class DcTrackerTest extends TelephonyTest {
         doReturn(DctConstants.State.RETRYING).when(mApnContext).getState();
         // Data now is disconnected
         doReturn(true).when(mApnContext).isConnectable();
+        doReturn(true).when(mDataEnabledSettings).isDataEnabled(anyInt());
         mDct.sendMessage(mDct.obtainMessage(DctConstants.EVENT_DISCONNECT_DONE,
                 new AsyncResult(Pair.create(mApnContext, 0), null, null)));
 
@@ -2866,5 +2955,51 @@ public class DcTrackerTest extends TelephonyTest {
         for (PreciseDataConnectionState state : captor.getAllValues()) {
             assertEquals(TelephonyManager.DATA_DISCONNECTED, state.getState());
         }
+    }
+
+    /**
+     * There is a corresponding test {@link DataConnectionTest#testDataServiceTempUnavailable()} to
+     * test DataConnection behavior.
+     */
+    @Test
+    public void testDataServiceTempUnavailable() {
+        Handler handler = Mockito.mock(Handler.class);
+        Message handoverCompleteMessage = Message.obtain(handler);
+        addHandoverCompleteMsg(handoverCompleteMessage, ApnSetting.TYPE_IMS);
+        initApns(ApnSetting.TYPE_IMS_STRING, new String[]{ApnSetting.TYPE_IMS_STRING});
+        mDct.sendMessage(mDct.obtainMessage(DctConstants.EVENT_DATA_SETUP_COMPLETE,
+                DcTracker.REQUEST_TYPE_HANDOVER, DataCallResponse.HANDOVER_FAILURE_MODE_UNKNOWN,
+                new AsyncResult(Pair.create(mApnContext, 0),
+                        DataFailCause.SERVICE_TEMPORARILY_UNAVAILABLE, new Exception())));
+        waitForLastHandlerAction(mDcTrackerTestHandler.getThreadHandler());
+        // Ensure handover is not completed yet
+        verify(handler, never()).sendMessageDelayed(any(), anyLong());
+    }
+
+    @Test
+    public void testNormalRequestDoesNotFailHandoverRequest() {
+        Handler handler = Mockito.mock(Handler.class);
+        Message handoverCompleteMessage = Message.obtain(handler);
+        addHandoverCompleteMsg(handoverCompleteMessage, ApnSetting.TYPE_IMS);
+        initApns(ApnSetting.TYPE_IMS_STRING, new String[]{ApnSetting.TYPE_IMS_STRING});
+        mDct.enableApn(ApnSetting.TYPE_IMS, DcTracker.REQUEST_TYPE_NORMAL, null);
+        waitForLastHandlerAction(mDcTrackerTestHandler.getThreadHandler());
+        // Ensure handover is not completed yet
+        verify(handler, never()).sendMessageDelayed(any(), anyLong());
+    }
+
+    @Test
+    public void testPreferenceChangedFallback() {
+        Handler handler = Mockito.mock(Handler.class);
+        doReturn(AccessNetworkConstants.TRANSPORT_TYPE_WLAN).when(mTransportManager)
+                .getPreferredTransport(anyInt());
+        Message handoverCompleteMessage = Message.obtain(handler);
+        addHandoverCompleteMsg(handoverCompleteMessage, ApnSetting.TYPE_IMS);
+        initApns(ApnSetting.TYPE_IMS_STRING, new String[]{ApnSetting.TYPE_IMS_STRING});
+        mDct.enableApn(ApnSetting.TYPE_IMS, DcTracker.REQUEST_TYPE_HANDOVER,
+                handoverCompleteMessage);
+        waitForLastHandlerAction(mDcTrackerTestHandler.getThreadHandler());
+        Bundle bundle = handoverCompleteMessage.getData();
+        assertTrue(bundle.getBoolean("extra_handover_failure_fallback"));
     }
 }

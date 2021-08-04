@@ -1685,6 +1685,16 @@ public class GsmCdmaPhone extends Phone {
     }
 
     @Override
+    public void setRadioPowerOnForTestEmergencyCall(boolean isSelectedPhoneForEmergencyCall) {
+        mSST.clearAllRadioOffReasons();
+
+        // We don't want to have forEmergency call be true to prevent radio emergencyDial command
+        // from being called for a test emergency number because the network may not be able to
+        // find emergency routing for it and dial it do the default emergency services line.
+        setRadioPower(true, false, isSelectedPhoneForEmergencyCall, false);
+    }
+
+    @Override
     public void setRadioPower(boolean power, boolean forEmergencyCall,
             boolean isSelectedPhoneForEmergencyCall, boolean forceApply) {
         setRadioPowerForReason(power, forEmergencyCall, isSelectedPhoneForEmergencyCall, forceApply,
@@ -1696,7 +1706,6 @@ public class GsmCdmaPhone extends Phone {
             boolean isSelectedPhoneForEmergencyCall, boolean forceApply, int reason) {
         mSST.setRadioPowerForReason(power, forEmergencyCall, isSelectedPhoneForEmergencyCall,
                 forceApply, reason);
-
     }
 
     private void storeVoiceMailNumber(String number) {
@@ -2316,7 +2325,8 @@ public class GsmCdmaPhone extends Phone {
             extras.putParcelable(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, phoneAccountHandle);
 
             final TelecomManager telecomManager = TelecomManager.from(mContext);
-            telecomManager.placeCall(Uri.parse(PhoneAccount.SCHEME_TEL + cfNumber), extras);
+            telecomManager.placeCall(
+                    Uri.fromParts(PhoneAccount.SCHEME_TEL, cfNumber, null), extras);
 
             AsyncResult.forMessage(onComplete, CommandsInterface.SS_STATUS_UNKNOWN, null);
             onComplete.sendToTarget();
@@ -2481,7 +2491,8 @@ public class GsmCdmaPhone extends Phone {
             extras.putParcelable(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, phoneAccountHandle);
 
             final TelecomManager telecomManager = TelecomManager.from(mContext);
-            telecomManager.placeCall(Uri.parse(PhoneAccount.SCHEME_TEL + cwPrefix), extras);
+            telecomManager.placeCall(
+                    Uri.fromParts(PhoneAccount.SCHEME_TEL, cwPrefix, null), extras);
 
             AsyncResult.forMessage(onComplete, CommandsInterface.SS_STATUS_UNKNOWN, null);
             onComplete.sendToTarget();
@@ -2902,8 +2913,6 @@ public class GsmCdmaPhone extends Phone {
                 break;
 
             case EVENT_CARRIER_CONFIG_CHANGED:
-                // Obtain new radio capabilities from the modem, since some are SIM-dependent
-                mCi.getRadioCapability(obtainMessage(EVENT_GET_RADIO_CAPABILITY));
                 // Only check for the voice radio tech if it not going to be updated by the voice
                 // registration changes.
                 if (!mContext.getResources().getBoolean(
@@ -2926,7 +2935,8 @@ public class GsmCdmaPhone extends Phone {
 
                 updateNrSettingsAfterCarrierConfigChanged(b);
                 loadAllowedNetworksFromSubscriptionDatabase();
-                updateAllowedNetworkTypes(null);
+                // Obtain new radio capabilities from the modem, since some are SIM-dependent
+                mCi.getRadioCapability(obtainMessage(EVENT_GET_RADIO_CAPABILITY));
                 break;
 
             case EVENT_SET_ROAMING_PREFERENCE_DONE:
@@ -3970,13 +3980,19 @@ public class GsmCdmaPhone extends Phone {
     }
 
     @Override
-    public void setSignalStrengthReportingCriteria(
-            int signalStrengthMeasure, int[] thresholds, int ran, boolean isEnabled) {
+    public void setSignalStrengthReportingCriteria(int signalStrengthMeasure,
+            int[] systemThresholds, int ran, boolean isEnabledForSystem) {
         int[] consolidatedThresholds = mSST.getConsolidatedSignalThresholds(
                 ran,
                 signalStrengthMeasure,
-                mSST.shouldHonorSystemThresholds() ? thresholds : new int[]{},
+                isEnabledForSystem && mSST.shouldHonorSystemThresholds() ? systemThresholds
+                        : new int[]{},
                 REPORTING_HYSTERESIS_DB);
+        boolean isEnabledForAppRequest = mSST.shouldEnableSignalThresholdForAppRequest(
+                ran,
+                signalStrengthMeasure,
+                getSubId(),
+                isDeviceIdle());
         mCi.setSignalStrengthReportingCriteria(
                 new SignalThresholdInfo.Builder()
                         .setRadioAccessNetworkType(ran)
@@ -3984,7 +4000,7 @@ public class GsmCdmaPhone extends Phone {
                         .setHysteresisMs(REPORTING_HYSTERESIS_MILLIS)
                         .setHysteresisDb(REPORTING_HYSTERESIS_DB)
                         .setThresholds(consolidatedThresholds, true /*isSystem*/)
-                        .setIsEnabled(isEnabled)
+                        .setIsEnabled(isEnabledForSystem || isEnabledForAppRequest)
                         .build(),
                 ran, null);
     }
