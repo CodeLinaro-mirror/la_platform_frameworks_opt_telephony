@@ -20,6 +20,9 @@ import static android.telephony.SubscriptionManager.DEFAULT_SUBSCRIPTION_ID;
 import static android.telephony.SubscriptionManager.INVALID_PHONE_INDEX;
 import static android.telephony.SubscriptionManager.INVALID_SUBSCRIPTION_ID;
 import static android.telephony.TelephonyManager.RADIO_POWER_UNAVAILABLE;
+import static android.telephony.TelephonyManager.SIM_STATE_PIN_REQUIRED;
+import static android.telephony.TelephonyManager.SIM_STATE_PUK_REQUIRED;
+import static android.telephony.TelephonyManager.SIM_STATE_NETWORK_LOCKED;
 
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -149,10 +152,13 @@ public class VendorPhoneSwitcher extends PhoneSwitcher {
                 log("mSimStateIntentReceiver: phoneId = " + phoneId + " value = " + value);
                 if (SubscriptionManager.isValidPhoneId(phoneId)) {
                     mSimStates[phoneId] = value;
+                    final boolean simDisabled = !isUiccProvisioned(phoneId);
+                    log("mSimStateIntentReceiver: phoneId = " + phoneId
+                            + " simDisabled = " + simDisabled);
                     // If SIM is absent, allow DDS request always, which avoids DDS switch
                     // can't be completed in the no-SIM case because the sent status of the
                     // old preferred phone has no chance to reset in hot-swap
-                    if (IccCardConstants.INTENT_VALUE_ICC_ABSENT.equals(value)) {
+                    if (IccCardConstants.INTENT_VALUE_ICC_ABSENT.equals(value) || simDisabled) {
                         mDdsRequestSent[phoneId] = false;
                     }
                 }
@@ -245,6 +251,17 @@ public class VendorPhoneSwitcher extends PhoneSwitcher {
         }
     }
 
+    private boolean isSimLocked(int phoneId) {
+        final int simState = mSubscriptionController.getSimStateForSlotIndex(phoneId);
+        if (SIM_STATE_PIN_REQUIRED == simState
+                || SIM_STATE_PUK_REQUIRED == simState
+                || SIM_STATE_NETWORK_LOCKED == simState) {
+            log("SIM locked for phoneId: " + phoneId);
+            return true;
+        }
+        return false;
+    }
+
     @Override
     protected boolean onEvaluate(boolean requestsChanged, String reason) {
         if (!com.android.internal.telephony.SubscriptionInfoUpdater.isSubInfoInitialized()) {
@@ -273,10 +290,10 @@ public class VendorPhoneSwitcher extends PhoneSwitcher {
         for (int i = 0; i < mActiveModemCount; i++) {
             int sub = mSubscriptionController.getSubIdUsingPhoneId(i);
 
-            if (SubscriptionManager.isValidSubscriptionId(sub) && isSimReady(i)) {
+            if (SubscriptionManager.isValidSubscriptionId(sub) && !isSimLocked(i)) {
                 hasAnyActiveSubscription = true;
             } else {
-		log("slot" + i + " not a valid subscription");
+                log("slot" + i + " not a valid subscription or locked");
             }
 
             if (sub != mPhoneSubscriptions[i]) {
