@@ -563,6 +563,9 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
     private String mLastDialString = null;
     private ImsDialArgs mLastDialArgs = null;
 
+    private boolean mPendingExitEcbmReq;
+    private boolean mPendingExitScbmReq;
+
     /**
      * Listeners to changes in the phone state.  Intended for use by other interested IMS components
      * without the need to register a full blown {@link android.telephony.PhoneStateListener}.
@@ -1054,6 +1057,14 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                     e.printStackTrace();
             }
         }
+        if (canExitScbm()) {
+             try {
+                 mPhone.mDefaultPhone.exitScbm();
+             } catch (Exception e) {
+                 e.printStackTrace();
+             }
+         }
+
         int mPreferredTtyMode = Settings.Secure.getInt(
                 mPhone.getContext().getContentResolver(),
                 Settings.Secure.PREFERRED_TTY_MODE,
@@ -1603,6 +1614,7 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
             return;
         }
         mCarrierConfigLoaded = true;
+        QtiImsUtils.updateRttConfigCache(mPhone.getContext(),mPhone.getPhoneId(), carrierConfig);
 
         updateCarrierConfigCache(carrierConfig);
         updateImsServiceConfig();
@@ -1805,7 +1817,7 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
 
                 // Set the RTT mode to 1 if sim supports RTT and if the connection has
                 // valid RTT text stream
-                if (isRttSupported() && conn.hasRttTextStream() && isStartRttCall) {
+                if (isRttSupported() && conn.hasRttTextStream() && isStartRttCall && isRttOn()) {
                     if (DBG) log("dialInternal: setting RTT mode to full");
                     profile.mMediaProfile.mRttMode = ImsStreamMediaProfile.RTT_MODE_FULL;
                 }
@@ -3158,6 +3170,7 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
 
     private void exitEmergencyMode() throws Exception {
         boolean isPhoneInEcbm = isPhoneInEcbm();
+        boolean isPhoneInScbm = canExitScbm();
         if (isPhoneInEcbm) {
             try {
                 EcbmHandler.getInstance().exitEmergencyCallbackMode();
@@ -3166,7 +3179,9 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
             }
             EcbmHandler.getInstance().setOnEcbModeExitResponse(this,
                     EVENT_EXIT_ECM_RESPONSE_CDMA, null);
-        } else {
+            mPendingExitEcbmReq = true;
+        }
+        if (isPhoneInScbm) {
             try {
                 mPhone.mDefaultPhone.exitScbm();
             } catch (Exception e) {
@@ -3174,6 +3189,7 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
             }
             mPhone.mDefaultPhone.setOnScbmExitResponse(this,
               EVENT_EXIT_SCBM_RESPONSE_CDMA, null);
+            mPendingExitScbmReq = true;
         }
     }
 
@@ -4532,7 +4548,7 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
     }
 
     private void handlePendingMoCall() {
-        if (pendingCallInEcm) {
+        if (pendingCallInEcm && !mPendingExitEcbmReq && !mPendingExitScbmReq) {
             dialInternal(mPendingMO, pendingCallClirMode,
                     mPendingCallVideoState, mPendingIntentExtras);
             mPendingIntentExtras = null;
@@ -4598,11 +4614,13 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                 break;
 
             case EVENT_EXIT_ECM_RESPONSE_CDMA:
+                mPendingExitEcbmReq = false;
                 handlePendingMoCall();
                 EcbmHandler.getInstance().unsetOnEcbModeExitResponse(this);
                 break;
 
             case EVENT_EXIT_SCBM_RESPONSE_CDMA:
+                mPendingExitScbmReq = false;
                 handlePendingMoCall();
                 mPhone.mDefaultPhone.unsetOnScbmExitResponse(this);
                 break;
@@ -5668,6 +5686,10 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
         return QtiImsUtils.isRttOn(mPhone.getPhoneId(), mPhone.getContext());
     }
 
+    private boolean isSimLessRttSupported() {
+        return QtiImsUtils.isSimLessRttSupported(mPhone.getPhoneId(), mPhone.getContext());
+    }
+
     /**
      * RTT call is allowed if RTT is supported by carrier and RTT setting is ON
      * and call is not a video call or RTT is supported for video calls.
@@ -5675,7 +5697,15 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
      * or device needs to be registered on WIFI or it should be an emergency call.
      */
     private boolean canMakeRttCall(ImsCallProfile profile, boolean isEmergency) {
-        if (!isRttSupported() || !isRttOn()) {
+        Phone defaultPhone = mPhone.getDefaultPhone();
+        IccCardConstants.State state = defaultPhone.getIccCard().getState();
+        /** RTT call needs to allowed based on carrier config if sim is present
+         * else we need to check the saved cache for simless RTT e911 call
+         */
+        if ((state == IccCardConstants.State.READY && !isRttSupported()) ||
+                (state == IccCardConstants.State.ABSENT && isEmergency &&
+                !isSimLessRttSupported())
+                || !isRttOn()) {
             return false;
         }
         if (profile != null && profile.isVideoCall() && !QtiImsUtils.isRttSupportedOnVtCalls(
