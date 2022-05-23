@@ -44,6 +44,7 @@ import android.os.ParcelUuid;
 import android.os.PersistableBundle;
 import android.os.RegistrantList;
 import android.os.RemoteException;
+import android.os.SystemProperties;
 import android.os.TelephonyServiceManager.ServiceRegisterer;
 import android.os.UserHandle;
 import android.provider.Settings;
@@ -125,6 +126,8 @@ public class SubscriptionController extends ISub.Stub {
     private static final int SUB_ID_FOUND = 1;
     private static final int NO_ENTRY_FOR_SLOT_INDEX = -1;
     private static final int SUB_ID_NOT_IN_SLOT = -2;
+
+    private static final String PROPERTY_SUBSIDY_DEVICE  = "persist.vendor.radio.subsidydevice";
 
     // Lock that both mCacheActiveSubInfoList and mCacheOpportunisticSubInfoList use.
     private Object mSubInfoListLock = new Object();
@@ -301,7 +304,8 @@ public class SubscriptionController extends ISub.Stub {
             SubscriptionManager.DATA_ENABLED_OVERRIDE_RULES,
             SubscriptionManager.UICC_APPLICATIONS_ENABLED,
             SubscriptionManager.IMS_RCS_UCE_ENABLED,
-            SubscriptionManager.CROSS_SIM_CALLING_ENABLED
+            SubscriptionManager.CROSS_SIM_CALLING_ENABLED,
+            SubscriptionManager.NR_ADVANCED_CALLING_ENABLED
     ));
 
     public static SubscriptionController init(Context c) {
@@ -404,6 +408,33 @@ public class SubscriptionController extends ISub.Stub {
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     private boolean isSubInfoReady() {
         return SubscriptionInfoUpdater.isSubInfoInitialized();
+    }
+
+    private boolean isSimLocked(int phoneId) {
+        int simState = mTelephonyManager.getSimState(phoneId);
+
+        return simState == TelephonyManager.SIM_STATE_PIN_REQUIRED
+                || simState == TelephonyManager.SIM_STATE_PUK_REQUIRED
+                || simState == TelephonyManager.SIM_STATE_NETWORK_LOCKED
+                || simState == TelephonyManager.SIM_STATE_PERM_DISABLED;
+    }
+
+    public boolean isSubIdCreationPending() {
+        if (DBG) logd("isSubIdCreationPending()...");
+
+        if (!SystemProperties.getBoolean(PROPERTY_SUBSIDY_DEVICE, false)) {
+            if (DBG) logd("Subsidy device property disabled");
+            return false;
+        }
+
+        Phone[] phones = PhoneFactory.getPhones();
+        for (Phone phone : phones) {
+            if (isSimLocked(phone.getPhoneId()) && !isActiveSubId(phone.getSubId())) {
+                if (DBG) logd("SubId Creation is Pending for slot : " + phone.getPhoneId());
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -2295,6 +2326,7 @@ public class SubscriptionController extends ISub.Stub {
             case SubscriptionManager.DATA_ROAMING:
             case SubscriptionManager.IMS_RCS_UCE_ENABLED:
             case SubscriptionManager.CROSS_SIM_CALLING_ENABLED:
+            case SubscriptionManager.NR_ADVANCED_CALLING_ENABLED:
                 values.put(propKey, cursor.getInt(columnIndex));
                 break;
             case SubscriptionManager.DISPLAY_NAME:
@@ -3256,6 +3288,7 @@ public class SubscriptionController extends ISub.Stub {
             case SubscriptionManager.IMS_RCS_UCE_ENABLED:
             case SubscriptionManager.CROSS_SIM_CALLING_ENABLED:
             case SubscriptionManager.VOIMS_OPT_IN_STATUS:
+            case SubscriptionManager.NR_ADVANCED_CALLING_ENABLED:
                 value.put(propKey, Integer.parseInt(propValue));
                 break;
             case SubscriptionManager.ALLOWED_NETWORK_TYPES:
@@ -3336,6 +3369,7 @@ public class SubscriptionController extends ISub.Stub {
                         case SubscriptionManager.VOIMS_OPT_IN_STATUS:
                         case SubscriptionManager.D2D_STATUS_SHARING:
                         case SubscriptionManager.D2D_STATUS_SHARING_SELECTED_CONTACTS:
+                        case SubscriptionManager.NR_ADVANCED_CALLING_ENABLED:
                             resultValue = cursor.getString(0);
                             break;
                         default:
