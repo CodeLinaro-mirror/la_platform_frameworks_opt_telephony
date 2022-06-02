@@ -65,6 +65,7 @@ import android.telecom.PhoneAccountHandle;
 import android.telecom.TelecomManager;
 import android.telecom.VideoProfile;
 import android.telephony.AccessNetworkConstants;
+import android.telephony.Annotation.DataActivityType;
 import android.telephony.Annotation.RadioPowerState;
 import android.telephony.BarringInfo;
 import android.telephony.CarrierConfigManager;
@@ -76,7 +77,6 @@ import android.telephony.PhoneNumberUtils;
 import android.telephony.RadioAccessFamily;
 import android.telephony.ServiceState;
 import android.telephony.ServiceState.RilRadioTechnology;
-import android.telephony.SignalThresholdInfo;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
@@ -147,11 +147,9 @@ public class GsmCdmaPhone extends Phone {
     private static final boolean DBG = true;
     private static final boolean VDBG = false; /* STOPSHIP if true */
 
-    /** Required magnitude change between unsolicited SignalStrength reports. */
-    private static final int REPORTING_HYSTERESIS_DB = 2;
     /** Required throughput change between unsolicited LinkCapacityEstimate reports. */
     private static final int REPORTING_HYSTERESIS_KBPS = 50;
-    /** Minimum time between unsolicited SignalStrength and LinkCapacityEstimate reports. */
+    /** Minimum time between unsolicited LinkCapacityEstimate reports. */
     private static final int REPORTING_HYSTERESIS_MILLIS = 3000;
 
     //GSM
@@ -308,7 +306,7 @@ public class GsmCdmaPhone extends Phone {
                 .makeCarrierSignalAgent(this);
         mAccessNetworksManager = mTelephonyComponentFactory
                 .inject(AccessNetworksManager.class.getName())
-                .makeAccessNetworksManager(this);
+                .makeAccessNetworksManager(this, getLooper());
         if (!isUsingNewDataStack()) {
             mTransportManager = mTelephonyComponentFactory.inject(TransportManager.class.getName())
                     .makeTransportManager(this);
@@ -785,34 +783,33 @@ public class GsmCdmaPhone extends Phone {
     }
 
     @Override
-    public DataActivityState getDataActivityState() {
+    public @DataActivityType int getDataActivityState() {
         if (isUsingNewDataStack()) {
-            // TODO: Support it correctly.
-            return DataActivityState.NONE;
+            return getDataNetworkController().getDataActivity();
         }
-        DataActivityState ret = DataActivityState.NONE;
+        int ret = TelephonyManager.DATA_ACTIVITY_NONE;
 
         if (mSST.getCurrentDataConnectionState() == ServiceState.STATE_IN_SERVICE
                 && getDcTracker(AccessNetworkConstants.TRANSPORT_TYPE_WWAN) != null) {
             switch (getDcTracker(AccessNetworkConstants.TRANSPORT_TYPE_WWAN).getActivity()) {
                 case DATAIN:
-                    ret = DataActivityState.DATAIN;
+                    ret = TelephonyManager.DATA_ACTIVITY_IN;
                 break;
 
                 case DATAOUT:
-                    ret = DataActivityState.DATAOUT;
+                    ret = TelephonyManager.DATA_ACTIVITY_OUT;
                 break;
 
                 case DATAINANDOUT:
-                    ret = DataActivityState.DATAINANDOUT;
+                    ret = TelephonyManager.DATA_ACTIVITY_INOUT;
                 break;
 
                 case DORMANT:
-                    ret = DataActivityState.DORMANT;
+                    ret = TelephonyManager.DATA_ACTIVITY_DORMANT;
                 break;
 
                 default:
-                    ret = DataActivityState.NONE;
+                    ret = TelephonyManager.DATA_ACTIVITY_NONE;
                 break;
             }
         }
@@ -1695,7 +1692,7 @@ public class GsmCdmaPhone extends Phone {
         return false;
     }
 
-    private void sendUssdResponse(String ussdRequest, CharSequence message, int returnCode,
+    protected void sendUssdResponse(String ussdRequest, CharSequence message, int returnCode,
                                    ResultReceiver wrappedCallback) {
         UssdResponse response = new UssdResponse(ussdRequest, message);
         Bundle returnData = new Bundle();
@@ -3307,7 +3304,8 @@ public class GsmCdmaPhone extends Phone {
                 boolean enabled = (boolean) ar.result;
                 if (isUsingNewDataStack()) {
                     getDataSettingsManager().setDataEnabled(
-                            TelephonyManager.DATA_ENABLED_REASON_CARRIER, enabled);
+                            TelephonyManager.DATA_ENABLED_REASON_CARRIER, enabled,
+                            mContext.getOpPackageName());
                     return;
                 }
                 mDataEnabledSettings.setDataEnabled(TelephonyManager.DATA_ENABLED_REASON_CARRIER,
@@ -4131,34 +4129,6 @@ public class GsmCdmaPhone extends Phone {
     }
 
     @Override
-    public void setSignalStrengthReportingCriteria(int signalStrengthMeasure,
-            int[] systemThresholds, int ran, boolean isEnabledForSystem) {
-        int[] consolidatedThresholds = mSignalStrengthController.getConsolidatedSignalThresholds(
-                ran,
-                signalStrengthMeasure,
-                isEnabledForSystem && mSignalStrengthController.shouldHonorSystemThresholds()
-                        ? systemThresholds
-                        : new int[]{},
-                REPORTING_HYSTERESIS_DB);
-        boolean isEnabledForAppRequest =
-                mSignalStrengthController.shouldEnableSignalThresholdForAppRequest(
-                        ran,
-                        signalStrengthMeasure,
-                        getSubId(),
-                        isDeviceIdle());
-        mCi.setSignalStrengthReportingCriteria(
-                new SignalThresholdInfo.Builder()
-                        .setRadioAccessNetworkType(ran)
-                        .setSignalMeasurementType(signalStrengthMeasure)
-                        .setHysteresisMs(REPORTING_HYSTERESIS_MILLIS)
-                        .setHysteresisDb(REPORTING_HYSTERESIS_DB)
-                        .setThresholds(consolidatedThresholds, true /*isSystem*/)
-                        .setIsEnabled(isEnabledForSystem || isEnabledForAppRequest)
-                        .build(),
-                ran, null);
-    }
-
-    @Override
     public void setLinkCapacityReportingCriteria(int[] dlThresholds, int[] ulThresholds, int ran) {
         mCi.setLinkCapacityReportingCriteria(REPORTING_HYSTERESIS_MILLIS, REPORTING_HYSTERESIS_KBPS,
                 REPORTING_HYSTERESIS_KBPS, dlThresholds, ulThresholds, ran, null);
@@ -4720,7 +4690,7 @@ public class GsmCdmaPhone extends Phone {
         mIsCarrierNrSupported = !ArrayUtils.isEmpty(nrAvailabilities);
     }
 
-    private void updateVoNrSettings(PersistableBundle config) {
+    protected void updateVoNrSettings(PersistableBundle config) {
         UiccSlot slot = mUiccController.getUiccSlotForPhone(mPhoneId);
 
         // If no card is present, do nothing.

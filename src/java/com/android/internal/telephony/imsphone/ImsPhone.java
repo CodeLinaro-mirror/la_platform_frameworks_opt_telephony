@@ -2542,12 +2542,14 @@ public class ImsPhone extends ImsPhoneBase {
             mMetrics.writeOnImsConnectionState(mPhoneId, ImsConnectionState.State.DISCONNECTED,
                     imsReasonInfo);
             mImsStats.onImsUnregistered(imsReasonInfo);
-            mCurrentSubscriberUris = null;
         }
 
         @Override
         public void handleImsSubscriberAssociatedUriChanged(Uri[] uris) {
-            if (DBG) logd("handleImsSubscriberAssociatedUriChanged");
+            if (DBG) logd("handleImsSubscriberAssociatedUriChanged" + uris);
+            if (uris == null && SubscriptionController.getInstance().isActiveSubId(getSubId())) {
+                return;
+            }
             setCurrentSubscriberUris(uris);
             setPhoneNumberForSourceIms(uris);
         }
@@ -2622,7 +2624,7 @@ public class ImsPhone extends ImsPhoneBase {
             imsDialArgsBuilder = ImsPhone.ImsDialArgs.Builder.from(dialArgs);
 
             Bundle extras = new Bundle(dialArgs.intentExtras);
-            if (causeCode == CallFailCause.EMC_REDIAL_ON_VOWIFI && isWifiCallingEnabled()) {
+            if (causeCode == CallFailCause.EMC_REDIAL_ON_VOWIFI) {
                 extras.putString(ImsCallProfile.EXTRA_CALL_RAT_TYPE,
                         String.valueOf(ServiceState.RIL_RADIO_TECHNOLOGY_IWLAN));
                 logd("trigger VoWifi emergency call");
