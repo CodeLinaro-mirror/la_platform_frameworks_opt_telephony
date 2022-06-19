@@ -1493,8 +1493,10 @@ public class DcTracker extends Handler {
             }
 
             // Check if the device is under data throttling.
+            // If it is a handover request, allows to handle it once to finish the process.
             long retryTime = mDataThrottler.getRetryTime(apnContext.getApnTypeBitmask());
-            if (retryTime > SystemClock.elapsedRealtime()) {
+            if (requestType != REQUEST_TYPE_HANDOVER
+                    && retryTime > SystemClock.elapsedRealtime()) {
                 reasons.add(DataDisallowedReasonType.DATA_THROTTLED);
             }
         }
@@ -2652,6 +2654,16 @@ public class DcTracker extends Handler {
         }
     }
 
+    private void onTrafficDescriptorsUpdated() {
+        for (ApnContext apnContext : mPrioritySortedApnContexts) {
+            if (apnContext.getApnTypeBitmask() == ApnSetting.TYPE_ENTERPRISE
+                    && apnContext.getApnSetting().getPermanentFailed()) {
+                setupDataOnConnectableApn(
+                        apnContext, Phone.REASON_TRAFFIC_DESCRIPTORS_UPDATED, RetryFailures.ALWAYS);
+            }
+        }
+    }
+
     private DataConnection checkForCompatibleDataConnection(ApnContext apnContext,
             ApnSetting nextApn) {
         int apnType = apnContext.getApnTypeBitmask();
@@ -3247,6 +3259,9 @@ public class DcTracker extends Handler {
 
                 // A connection is setup
                 apnContext.setState(DctConstants.State.CONNECTED);
+
+                // Reset the waiting apns, so that the accumulated retry count gets cleared.
+                apnContext.setWaitingApns(apnContext.getWaitingApns());
 
                 checkDataRoamingStatus(false);
 
@@ -4369,6 +4384,9 @@ public class DcTracker extends Handler {
                 ar = (AsyncResult) msg.obj;
                 String apn = (String) ar.result;
                 onApnUnthrottled(apn);
+                break;
+            case DctConstants.EVENT_TRAFFIC_DESCRIPTORS_UPDATED:
+                onTrafficDescriptorsUpdated();
                 break;
             default:
                 Rlog.e("DcTracker", "Unhandled event=" + msg);
