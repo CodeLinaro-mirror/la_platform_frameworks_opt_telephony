@@ -53,6 +53,7 @@ import android.util.ArraySet;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.CarrierAppUtils;
+import com.android.internal.telephony.CarrierPrivilegesTracker;
 import com.android.internal.telephony.CommandsInterface;
 import com.android.internal.telephony.IccCard;
 import com.android.internal.telephony.IccCardConstants;
@@ -239,6 +240,13 @@ public class UiccProfile extends IccCard {
 
                 case EVENT_CARRIER_PRIVILEGES_LOADED:
                     if (VDBG) log("handleMessage: EVENT_CARRIER_PRIVILEGES_LOADED");
+                    Phone phone = PhoneFactory.getPhone(mPhoneId);
+                    if (phone != null) {
+                        CarrierPrivilegesTracker cpt = phone.getCarrierPrivilegesTracker();
+                        if (cpt != null) {
+                            cpt.onUiccAccessRulesLoaded();
+                        }
+                    }
                     onCarrierPrivilegesLoadedMessage();
                     updateExternalState();
                     break;
@@ -258,8 +266,13 @@ public class UiccProfile extends IccCard {
                         logWithLocalLog("handleMessage: Error in SIM access with exception "
                                 + ar.exception);
                     }
-                    AsyncResult.forMessage((Message) ar.userObj, ar.result, ar.exception);
-                    ((Message) ar.userObj).sendToTarget();
+                    if (ar.userObj != null) {
+                        AsyncResult.forMessage((Message) ar.userObj, ar.result, ar.exception);
+                        ((Message) ar.userObj).sendToTarget();
+                    } else {
+                        loge("handleMessage: ar.userObj is null in event:" + eventName
+                                + ", failed to post status back to caller");
+                    }
                     break;
                 }
 

@@ -70,6 +70,9 @@ import java.util.stream.Collectors;
  * {@link CarrierConfigManager}. All the data config will be loaded once and stored here.
  */
 public class DataConfigManager extends Handler {
+    /** The default timeout in ms for data network stuck in a transit state. */
+    private static final int DEFAULT_NETWORK_TRANSIT_STATE_TIMEOUT_MS = 300000;
+
     /** Event for carrier config changed. */
     private static final int EVENT_CARRIER_CONFIG_CHANGED = 1;
 
@@ -220,19 +223,19 @@ public class DataConfigManager extends Handler {
 
     /**
      * Timeout in ms before creating an anomaly report for a DataNetwork stuck in
-     * {@link DataNetwork#ConnectingState}.
+     * {@link DataNetwork.ConnectingState}.
      */
     private int mNetworkConnectingTimeout;
 
     /**
      * Timeout in ms before creating an anomaly report for a DataNetwork stuck in
-     * {@link DataNetwork#DisconnectingState}.
+     * {@link DataNetwork.DisconnectingState}.
      */
     private int mNetworkDisconnectingTimeout;
 
     /**
      * Timeout in ms before creating an anomaly report for a DataNetwork stuck in
-     * {@link DataNetwork#HandoverState}.
+     * {@link DataNetwork.HandoverState}.
      */
     private int mNetworkHandoverTimeout;
 
@@ -347,22 +350,23 @@ public class DataConfigManager extends Handler {
 
         mImsReleaseRequestAnomalyReportThreshold = parseSlidingWindowCounterThreshold(
                 properties.getString(KEY_ANOMALY_IMS_RELEASE_REQUEST, null),
-                300000,
+                0,
                 12);
         mNetworkUnwantedAnomalyReportThreshold = parseSlidingWindowCounterThreshold(
                 properties.getString(KEY_ANOMALY_NETWORK_UNWANTED, null),
-                300000,
+                0,
                 12);
         mSetupDataCallAnomalyReportThreshold = parseSlidingWindowCounterThreshold(
                 properties.getString(KEY_ANOMALY_SETUP_DATA_CALL_FAILURE, null),
                 0,
                 2);
         mNetworkConnectingTimeout = properties.getInt(
-                KEY_ANOMALY_NETWORK_CONNECTING_TIMEOUT, 86400000);
+                KEY_ANOMALY_NETWORK_CONNECTING_TIMEOUT, DEFAULT_NETWORK_TRANSIT_STATE_TIMEOUT_MS);
         mNetworkDisconnectingTimeout = properties.getInt(
-                KEY_ANOMALY_NETWORK_DISCONNECTING_TIMEOUT, 86400000);
+                KEY_ANOMALY_NETWORK_DISCONNECTING_TIMEOUT,
+                DEFAULT_NETWORK_TRANSIT_STATE_TIMEOUT_MS);
         mNetworkHandoverTimeout = properties.getInt(
-                KEY_ANOMALY_NETWORK_HANDOVER_TIMEOUT, 86400000);
+                KEY_ANOMALY_NETWORK_HANDOVER_TIMEOUT, DEFAULT_NETWORK_TRANSIT_STATE_TIMEOUT_MS);
     }
 
     /**
@@ -541,6 +545,14 @@ public class DataConfigManager extends Handler {
                 .map(DataUtils::apnTypeToNetworkCapability)
                 .filter(cap -> cap >= 0)
                 .collect(Collectors.toUnmodifiableSet());
+    }
+
+    /**
+     * @return {@code true} if tethering profile should not be used when the device is roaming.
+     */
+    public boolean isTetheringProfileDisabledForRoaming() {
+        return mCarrierConfig.getBoolean(
+                CarrierConfigManager.KEY_DISABLE_DUN_APN_WHILE_ROAMING_WITH_PRESET_APN_BOOL);
     }
 
     /**
@@ -783,7 +795,7 @@ public class DataConfigManager extends Handler {
 
     /**
      * @return Timeout in ms before creating an anomaly report for a DataNetwork stuck in
-     * {@link DataNetwork#ConnectingState}.
+     * {@link DataNetwork.ConnectingState}.
      */
     public int getAnomalyNetworkConnectingTimeoutMs() {
         return mNetworkConnectingTimeout;
@@ -791,7 +803,7 @@ public class DataConfigManager extends Handler {
 
     /**
      * @return Timeout in ms before creating an anomaly report for a DataNetwork stuck in
-     * {@link DataNetwork#DisconnectingState}.
+     * {@link DataNetwork.DisconnectingState}.
      */
     public int getAnomalyNetworkDisconnectingTimeoutMs() {
         return mNetworkDisconnectingTimeout;
@@ -799,7 +811,7 @@ public class DataConfigManager extends Handler {
 
     /**
      * @return Timeout in ms before creating an anomaly report for a DataNetwork stuck in
-     * {@link DataNetwork#HandoverState}.
+     * {@link DataNetwork.HandoverState}.
      */
     public int getNetworkHandoverTimeoutMs() {
         return mNetworkHandoverTimeout;
@@ -1129,10 +1141,22 @@ public class DataConfigManager extends Handler {
     }
 
     /**
-     * Registration point for subscription info ready
+     * @return {@code true} if enhanced IWLAN handover check is enabled. If enabled, telephony
+     * frameworks will not perform handover if the target transport is out of service, or VoPS not
+     * supported. The network will be torn down on the source transport, and will be
+     * re-established on the target transport when condition is allowed for bringing up a new
+     * network.
+     */
+    public boolean isEnhancedIwlanHandoverCheckEnabled() {
+        return mResources.getBoolean(
+                com.android.internal.R.bool.config_enhanced_iwlan_handover_check);
+    }
+
+    /**
+     * Registration point for subscription info ready.
      *
-     * @param h handler to notify
-     * @param what what code of message when delivered
+     * @param h handler to notify.
+     * @param what what code of message when delivered.
      */
     public void registerForConfigUpdate(Handler h, int what) {
         mConfigUpdateRegistrants.addUnique(h, what, null);
@@ -1226,6 +1250,9 @@ public class DataConfigManager extends Handler {
         pw.println("Bandwidth estimation source=" + mResources.getString(
                 com.android.internal.R.string.config_bandwidthEstimateSource));
         pw.println("isDelayTearDownImsEnabled=" + isImsDelayTearDownEnabled());
+        pw.println("isEnhancedIwlanHandoverCheckEnabled=" + isEnhancedIwlanHandoverCheckEnabled());
+        pw.println("isTetheringProfileDisabledForRoaming="
+                + isTetheringProfileDisabledForRoaming());
         pw.decreaseIndent();
     }
 }
