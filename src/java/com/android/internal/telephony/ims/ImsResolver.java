@@ -13,6 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+/*
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
 
 package com.android.internal.telephony.ims;
 
@@ -34,6 +40,7 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.PersistableBundle;
 import android.os.RemoteException;
+import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.os.UserManager;
 import android.telephony.CarrierConfigManager;
@@ -567,6 +574,8 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
     private final Map<ComponentName, ImsServiceController> mActiveControllers = new HashMap<>();
     private ImsServiceFeatureQueryManager mFeatureQueryManager;
 
+    private static boolean mIsBike = SystemProperties.getBoolean("ro.hw.vehicle.isbike", false);
+
     public ImsResolver(Context context, String defaultMmTelPackageName,
             String defaultRcsPackageName, int numSlots, ImsFeatureBinderRepository repo) {
         Log.i(TAG, "device MMTEL package: " + defaultMmTelPackageName + ", device RCS package:"
@@ -579,7 +588,7 @@ public class ImsResolver implements ImsServiceController.ImsServiceControllerCal
         mCarrierServices = new SparseArray<>(mNumSlots);
         setDeviceConfiguration(defaultMmTelPackageName, ImsFeature.FEATURE_EMERGENCY_MMTEL);
         setDeviceConfiguration(defaultMmTelPackageName, ImsFeature.FEATURE_MMTEL);
-        setDeviceConfiguration(defaultRcsPackageName, ImsFeature.FEATURE_RCS);
+        if (!mIsBike) setDeviceConfiguration(defaultRcsPackageName, ImsFeature.FEATURE_RCS);
         mCarrierConfigManager = (CarrierConfigManager) mContext.getSystemService(
                 Context.CARRIER_CONFIG_SERVICE);
         mOverrideServices = new SparseArray<>(0 /*initial size*/);
