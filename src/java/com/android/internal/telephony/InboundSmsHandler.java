@@ -13,7 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+/*
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
 package com.android.internal.telephony;
 
 import static android.os.PowerWhitelistManager.REASON_EVENT_MMS;
@@ -56,6 +60,7 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.PowerManager;
 import android.os.PowerWhitelistManager;
+import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.os.UserManager;
 import android.os.storage.StorageManager;
@@ -730,10 +735,10 @@ public abstract class InboundSmsHandler extends StateMachine {
             loge("dispatchSmsMessage: message is null");
             return RESULT_SMS_NULL_MESSAGE;
         }
-
-        if (mSmsReceiveDisabled) {
+        boolean smsDisableCpms = "true".equals(SystemProperties.get("persist.radio.cpms.sms.disabled"));
+        if (mSmsReceiveDisabled || smsDisableCpms) {
             // Device doesn't support receiving SMS,
-            log("Received short message on device which doesn't support "
+            loge("Received short message on device which doesn't support "
                     + "receiving SMS. Ignored.");
             return Intents.RESULT_SMS_HANDLED;
         }
