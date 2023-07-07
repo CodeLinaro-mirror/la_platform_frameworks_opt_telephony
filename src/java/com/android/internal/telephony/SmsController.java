@@ -163,10 +163,9 @@ public class SmsController extends ISmsImplBase {
 
         // Check if user is associated with the subscription
         if (!TelephonyPermissions.checkSubscriptionAssociatedWithUser(mContext, subId,
-                Binder.getCallingUserHandle())) {
-            if (TelephonyUtils.isUidForeground(mContext, Binder.getCallingUid())) {
-                TelephonyUtils.showErrorIfSubscriptionAssociatedWithManagedProfile(mContext, subId);
-            }
+                Binder.getCallingUserHandle(), destAddr)) {
+            TelephonyUtils.showSwitchToManagedProfileDialogIfAppropriate(mContext, subId,
+                    Binder.getCallingUid(), callingPackage);
             sendErrorInPendingIntent(sentIntent, SmsManager.RESULT_USER_NOT_ALLOWED);
             return;
         }
@@ -261,11 +260,15 @@ public class SmsController extends ISmsImplBase {
         }
 
         // Check if user is associated with the subscription
-        if (!TelephonyPermissions.checkSubscriptionAssociatedWithUser(mContext, subId,
-                Binder.getCallingUserHandle())) {
-            if (TelephonyUtils.isUidForeground(mContext, Binder.getCallingUid())) {
-                TelephonyUtils.showErrorIfSubscriptionAssociatedWithManagedProfile(mContext, subId);
-            }
+        boolean crossUserFullGranted = mContext.checkCallingOrSelfPermission(
+                android.Manifest.permission.INTERACT_ACROSS_USERS_FULL) == PERMISSION_GRANTED;
+        Rlog.d(LOG_TAG, "sendTextForSubscriber: caller has INTERACT_ACROSS_USERS_FULL? "
+                + crossUserFullGranted);
+        if (!crossUserFullGranted
+                && !TelephonyPermissions.checkSubscriptionAssociatedWithUser(mContext, subId,
+                Binder.getCallingUserHandle(), destAddr)) {
+            TelephonyUtils.showSwitchToManagedProfileDialogIfAppropriate(mContext, subId,
+                    Binder.getCallingUid(), callingPackage);
             sendErrorInPendingIntent(sentIntent, SmsManager.RESULT_USER_NOT_ALLOWED);
             return;
         }
@@ -347,10 +350,9 @@ public class SmsController extends ISmsImplBase {
 
         // Check if user is associated with the subscription
         if (!TelephonyPermissions.checkSubscriptionAssociatedWithUser(mContext, subId,
-                Binder.getCallingUserHandle())) {
-            if (TelephonyUtils.isUidForeground(mContext, Binder.getCallingUid())) {
-                TelephonyUtils.showErrorIfSubscriptionAssociatedWithManagedProfile(mContext, subId);
-            }
+                Binder.getCallingUserHandle(), destAddr)) {
+            TelephonyUtils.showSwitchToManagedProfileDialogIfAppropriate(mContext, subId,
+                    Binder.getCallingUid(), callingPackage);
             sendErrorInPendingIntent(sentIntent, SmsManager.RESULT_USER_NOT_ALLOWED);
             return;
         }
@@ -387,10 +389,9 @@ public class SmsController extends ISmsImplBase {
 
         // Check if user is associated with the subscription
         if (!TelephonyPermissions.checkSubscriptionAssociatedWithUser(mContext, subId,
-                Binder.getCallingUserHandle())) {
-            if (TelephonyUtils.isUidForeground(mContext, Binder.getCallingUid())) {
-                TelephonyUtils.showErrorIfSubscriptionAssociatedWithManagedProfile(mContext, subId);
-            }
+                Binder.getCallingUserHandle(), destAddr)) {
+            TelephonyUtils.showSwitchToManagedProfileDialogIfAppropriate(mContext, subId,
+                    Binder.getCallingUid(), callingPackage);
             sendErrorInPendingIntents(sentIntents, SmsManager.RESULT_USER_NOT_ALLOWED);
             return;
         }
@@ -425,10 +426,9 @@ public class SmsController extends ISmsImplBase {
 
         // Check if user is associated with the subscription
         if (!TelephonyPermissions.checkSubscriptionAssociatedWithUser(mContext, subId,
-                Binder.getCallingUserHandle())) {
-            if (TelephonyUtils.isUidForeground(mContext, Binder.getCallingUid())) {
-                TelephonyUtils.showErrorIfSubscriptionAssociatedWithManagedProfile(mContext, subId);
-            }
+                Binder.getCallingUserHandle(), destAddr)) {
+            TelephonyUtils.showSwitchToManagedProfileDialogIfAppropriate(mContext, subId,
+                    Binder.getCallingUid(), callingPackage);
             sendErrorInPendingIntents(sentIntents, SmsManager.RESULT_USER_NOT_ALLOWED);
             return;
         }
@@ -933,10 +933,9 @@ public class SmsController extends ISmsImplBase {
 
         // Check if user is associated with the subscription
         if (!TelephonyPermissions.checkSubscriptionAssociatedWithUser(mContext, subId,
-                Binder.getCallingUserHandle())) {
-            if (TelephonyUtils.isUidForeground(mContext, Binder.getCallingUid())) {
-                TelephonyUtils.showErrorIfSubscriptionAssociatedWithManagedProfile(mContext, subId);
-            }
+                Binder.getCallingUserHandle(), number)) {
+            TelephonyUtils.showSwitchToManagedProfileDialogIfAppropriate(mContext, subId,
+                    Binder.getCallingUid(), callingPackage);
             sendErrorInPendingIntent(sentIntent, SmsManager.RESULT_USER_NOT_ALLOWED);
             return;
         }

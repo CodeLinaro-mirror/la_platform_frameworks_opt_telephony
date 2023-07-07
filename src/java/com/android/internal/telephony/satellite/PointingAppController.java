@@ -18,22 +18,29 @@ package com.android.internal.telephony.satellite;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.content.ActivityNotFoundException;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.os.AsyncResult;
+import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
 import android.os.RemoteException;
+import android.os.SystemProperties;
 import android.telephony.Rlog;
 import android.telephony.satellite.ISatelliteTransmissionUpdateCallback;
 import android.telephony.satellite.PointingInfo;
 import android.telephony.satellite.SatelliteManager;
 import android.text.TextUtils;
 
+import com.android.internal.R;
 import com.android.internal.telephony.Phone;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
@@ -42,11 +49,15 @@ import java.util.function.Consumer;
  */
 public class PointingAppController {
     private static final String TAG = "PointingAppController";
+    private static final String ALLOW_MOCK_MODEM_PROPERTY = "persist.radio.allow_mock_modem";
+    private static final boolean DEBUG = !"user".equals(Build.TYPE);
 
     @NonNull
     private static PointingAppController sInstance;
     @NonNull private final Context mContext;
     private boolean mStartedSatelliteTransmissionUpdates;
+    @NonNull private String mPointingUiPackageName = "";
+    @NonNull private String mPointingUiClassName = "";
 
     /**
      * Map key: subId, value: SatelliteTransmissionUpdateHandler to notify registrants.
@@ -96,9 +107,25 @@ public class PointingAppController {
         mStartedSatelliteTransmissionUpdates = startedSatelliteTransmissionUpdates;
     }
 
+    private static final class DatagramTransferStateHandlerRequest {
+        public int datagramTransferState;
+        public int pendingCount;
+        public int errorCode;
+
+        DatagramTransferStateHandlerRequest(int datagramTransferState, int pendingCount,
+                int errorCode) {
+            this.datagramTransferState = datagramTransferState;
+            this.pendingCount = pendingCount;
+            this.errorCode = errorCode;
+        }
+    }
+
+
     private static final class SatelliteTransmissionUpdateHandler extends Handler {
         public static final int EVENT_POSITION_INFO_CHANGED = 1;
-        public static final int EVENT_DATAGRAM_TRANSFER_STATE_CHANGED = 2;
+        public static final int EVENT_SEND_DATAGRAM_STATE_CHANGED = 2;
+        public static final int EVENT_RECEIVE_DATAGRAM_STATE_CHANGED = 3;
+        public static final int EVENT_DATAGRAM_TRANSFER_STATE_CHANGED = 4;
 
         private final ConcurrentHashMap<IBinder, ISatelliteTransmissionUpdateCallback> mListeners;
         SatelliteTransmissionUpdateHandler(Looper looper) {
@@ -124,28 +151,67 @@ public class PointingAppController {
                 case EVENT_POSITION_INFO_CHANGED: {
                     AsyncResult ar = (AsyncResult) msg.obj;
                     PointingInfo pointingInfo = (PointingInfo) ar.result;
+                    List<IBinder> toBeRemoved = new ArrayList<>();
                     mListeners.values().forEach(listener -> {
                         try {
                             listener.onSatellitePositionChanged(pointingInfo);
                         } catch (RemoteException e) {
                             logd("EVENT_POSITION_INFO_CHANGED RemoteException: " + e);
+                            toBeRemoved.add(listener.asBinder());
                         }
+                    });
+                    toBeRemoved.forEach(listener -> {
+                        mListeners.remove(listener);
                     });
                     break;
                 }
+
                 case EVENT_DATAGRAM_TRANSFER_STATE_CHANGED: {
                     AsyncResult ar = (AsyncResult) msg.obj;
-                    int result = (int) ar.result;
+                    logd("Receive EVENT_DATAGRAM_TRANSFER_STATE_CHANGED state=" + (int) ar.result);
+                    break;
+                }
+
+                case EVENT_SEND_DATAGRAM_STATE_CHANGED: {
+                    logd("Received EVENT_SEND_DATAGRAM_STATE_CHANGED");
+                    DatagramTransferStateHandlerRequest request =
+                            (DatagramTransferStateHandlerRequest) msg.obj;
+                    List<IBinder> toBeRemoved = new ArrayList<>();
                     mListeners.values().forEach(listener -> {
                         try {
-                            // TODO: process and return the rest of the values correctly
-                            listener.onDatagramTransferStateChanged(result, 0, 0, 0);
+                            listener.onSendDatagramStateChanged(request.datagramTransferState,
+                                    request.pendingCount, request.errorCode);
                         } catch (RemoteException e) {
-                            logd("EVENT_DATAGRAM_TRANSFER_STATE_CHANGED RemoteException: " + e);
+                            logd("EVENT_SEND_DATAGRAM_STATE_CHANGED RemoteException: " + e);
+                            toBeRemoved.add(listener.asBinder());
                         }
+                    });
+                    toBeRemoved.forEach(listener -> {
+                        mListeners.remove(listener);
                     });
                     break;
                 }
+
+                case EVENT_RECEIVE_DATAGRAM_STATE_CHANGED: {
+                    logd("Received EVENT_RECEIVE_DATAGRAM_STATE_CHANGED");
+                    DatagramTransferStateHandlerRequest request =
+                            (DatagramTransferStateHandlerRequest) msg.obj;
+                    List<IBinder> toBeRemoved = new ArrayList<>();
+                    mListeners.values().forEach(listener -> {
+                        try {
+                            listener.onReceiveDatagramStateChanged(request.datagramTransferState,
+                                    request.pendingCount, request.errorCode);
+                        } catch (RemoteException e) {
+                            logd("EVENT_RECEIVE_DATAGRAM_STATE_CHANGED RemoteException: " + e);
+                            toBeRemoved.add(listener.asBinder());
+                        }
+                    });
+                    toBeRemoved.forEach(listener -> {
+                        mListeners.remove(listener);
+                    });
+                    break;
+                }
+
                 default:
                     loge("SatelliteTransmissionUpdateHandler unknown event: " + msg.what);
             }
@@ -173,11 +239,6 @@ public class PointingAppController {
                 SatelliteModemInterface.getInstance().registerForSatellitePositionInfoChanged(
                         handler, SatelliteTransmissionUpdateHandler.EVENT_POSITION_INFO_CHANGED,
                         null);
-                /**
-                 * TODO: Need to remove this call, Datagram transfer state should come from the
-                 * DatagramController based upon Transfer state.
-                 * Modem won't be able to provide this info
-                 */
                 SatelliteModemInterface.getInstance().registerForDatagramTransferStateChanged(
                         handler,
                         SatelliteTransmissionUpdateHandler.EVENT_DATAGRAM_TRANSFER_STATE_CHANGED,
@@ -185,7 +246,6 @@ public class PointingAppController {
             } else {
                 phone.registerForSatellitePositionInfoChanged(handler,
                         SatelliteTransmissionUpdateHandler.EVENT_POSITION_INFO_CHANGED, null);
-                // TODO: registerForDatagramTransferStateChanged through SatelliteController
             }
         }
     }
@@ -207,13 +267,6 @@ public class PointingAppController {
             handler.removeListener(callback);
 
             if (handler.hasListeners()) {
-                /**
-                 * TODO (b/269194948): If the calling apps crash, the handler will always have some
-                 * listener. That is, we will not request modem to stop position update and
-                 * cleaning our resources. We need to monitor the calling apps and clean up the
-                 * resources when the apps die. We need to do this for other satellite callbacks
-                 * as well.
-                 */
                 result.accept(SatelliteManager.SATELLITE_ERROR_NONE);
                 return;
             }
@@ -230,7 +283,6 @@ public class PointingAppController {
                     return;
                 }
                 phone.unregisterForSatellitePositionInfoChanged(handler);
-                // TODO: unregisterForDatagramTransferStateChanged through SatelliteController
             }
         }
     }
@@ -246,6 +298,9 @@ public class PointingAppController {
     public void startSatelliteTransmissionUpdates(@NonNull Message message, @Nullable Phone phone) {
         if (mStartedSatelliteTransmissionUpdates) {
             logd("startSatelliteTransmissionUpdates: already started");
+            AsyncResult.forMessage(message, null, new SatelliteManager.SatelliteException(
+                    SatelliteManager.SATELLITE_ERROR_NONE));
+            message.sendToTarget();
             return;
         }
         if (SatelliteModemInterface.getInstance().isSatelliteServiceSupported()) {
@@ -288,11 +343,123 @@ public class PointingAppController {
      * @param needFullScreenPointingUI if pointing UI has to be launchd with Full screen
      */
     public void startPointingUI(boolean needFullScreenPointingUI) {
-        String packageName = TextUtils.emptyIfNull(mContext.getResources()
-                .getString(com.android.internal.R.string.config_pointing_ui_package));
-        Intent launchIntent = mContext.getPackageManager().getLaunchIntentForPackage(packageName);
+        String packageName = getPointingUiPackageName();
+        if (TextUtils.isEmpty(packageName)) {
+            logd("startPointingUI: config_pointing_ui_package is not set. Ignore the request");
+            return;
+        }
+
+        Intent launchIntent;
+        String className = getPointingUiClassName();
+        if (!TextUtils.isEmpty(className)) {
+            launchIntent = new Intent()
+                    .setComponent(new ComponentName(packageName, className))
+                    .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        } else {
+            launchIntent = mContext.getPackageManager().getLaunchIntentForPackage(packageName);
+        }
+        if (launchIntent == null) {
+            loge("startPointingUI: launchIntent is null");
+            return;
+        }
         launchIntent.putExtra("needFullScreen", needFullScreenPointingUI);
-        mContext.startActivity(launchIntent);
+
+        try {
+            mContext.startActivity(launchIntent);
+        } catch (ActivityNotFoundException ex) {
+            loge("startPointingUI: Pointing UI app activity is not found, ex=" + ex);
+        }
+    }
+
+    public void updateSendDatagramTransferState(int subId,
+            @SatelliteManager.SatelliteDatagramTransferState int datagramTransferState,
+            int sendPendingCount, int errorCode) {
+        DatagramTransferStateHandlerRequest request = new DatagramTransferStateHandlerRequest(
+                datagramTransferState, sendPendingCount, errorCode);
+        SatelliteTransmissionUpdateHandler handler =
+                mSatelliteTransmissionUpdateHandlers.get(subId);
+
+        if (handler != null) {
+            Message msg = handler.obtainMessage(
+                    SatelliteTransmissionUpdateHandler.EVENT_SEND_DATAGRAM_STATE_CHANGED,
+                    request);
+            msg.sendToTarget();
+        } else {
+            loge("SatelliteTransmissionUpdateHandler not found for subId: " + subId);
+        }
+    }
+
+    public void updateReceiveDatagramTransferState(int subId,
+            @SatelliteManager.SatelliteDatagramTransferState int datagramTransferState,
+            int receivePendingCount, int errorCode) {
+        DatagramTransferStateHandlerRequest request = new DatagramTransferStateHandlerRequest(
+                datagramTransferState, receivePendingCount, errorCode);
+        SatelliteTransmissionUpdateHandler handler =
+                mSatelliteTransmissionUpdateHandlers.get(subId);
+
+        if (handler != null) {
+            Message msg = handler.obtainMessage(
+                    SatelliteTransmissionUpdateHandler.EVENT_RECEIVE_DATAGRAM_STATE_CHANGED,
+                    request);
+            msg.sendToTarget();
+        } else {
+            loge(" SatelliteTransmissionUpdateHandler not found for subId: " + subId);
+        }
+    }
+
+    /**
+     * This API can be used by only CTS to update satellite pointing UI app package and class names.
+     *
+     * @param packageName The package name of the satellite pointing UI app.
+     * @param className The class name of the satellite pointing UI app.
+     * @return {@code true} if the satellite pointing UI app package and class is set successfully,
+     * {@code false} otherwise.
+     */
+    boolean setSatellitePointingUiClassName(
+            @Nullable String packageName, @Nullable String className) {
+        if (!isMockModemAllowed()) {
+            loge("setSatellitePointingUiClassName: modifying satellite pointing UI package and "
+                    + "class name is not allowed");
+            return false;
+        }
+
+        logd("setSatellitePointingUiClassName: config_pointing_ui_package is updated, new "
+                + "packageName=" + packageName
+                + ", config_pointing_ui_class new className=" + className);
+
+        if (packageName == null || packageName.equals("null")) {
+            mPointingUiPackageName = "";
+            mPointingUiClassName = "";
+        } else {
+            mPointingUiPackageName = packageName;
+            if (className == null || className.equals("null")) {
+                mPointingUiClassName = "";
+            } else {
+                mPointingUiClassName = className;
+            }
+        }
+
+        return true;
+    }
+
+    @NonNull private String getPointingUiPackageName() {
+        if (!TextUtils.isEmpty(mPointingUiPackageName)) {
+            return mPointingUiPackageName;
+        }
+        return TextUtils.emptyIfNull(mContext.getResources().getString(
+                R.string.config_pointing_ui_package));
+    }
+
+    @NonNull private String getPointingUiClassName() {
+        if (!TextUtils.isEmpty(mPointingUiClassName)) {
+            return mPointingUiClassName;
+        }
+        return TextUtils.emptyIfNull(mContext.getResources().getString(
+                R.string.config_pointing_ui_class));
+    }
+
+    private boolean isMockModemAllowed() {
+        return (DEBUG || SystemProperties.getBoolean(ALLOW_MOCK_MODEM_PROPERTY, false));
     }
 
     private static void logd(@NonNull String log) {

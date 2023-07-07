@@ -24,6 +24,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.net.LinkProperties;
 import android.net.NetworkAgent;
 import android.net.NetworkCapabilities;
 import android.net.NetworkPolicyManager;
@@ -34,6 +35,7 @@ import android.os.AsyncResult;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
+import android.telecom.TelecomManager;
 import android.telephony.AccessNetworkConstants;
 import android.telephony.AccessNetworkConstants.AccessNetworkType;
 import android.telephony.AccessNetworkConstants.RadioAccessNetworkType;
@@ -77,7 +79,6 @@ import android.util.IndentingPrintWriter;
 import android.util.LocalLog;
 import android.util.SparseArray;
 import android.util.SparseBooleanArray;
-import android.util.SparseIntArray;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.Phone;
@@ -223,6 +224,13 @@ public class DataNetworkController extends Handler {
     private static final long REEVALUATE_UNSATISFIED_NETWORK_REQUESTS_TAC_CHANGED_DELAY_MILLIS =
             TimeUnit.MILLISECONDS.toMillis(100);
 
+    /**
+     * The delay in milliseconds to re-evaluate unsatisfied network requests after network request
+     * detached.
+     */
+    private static final long REEVALUATE_UNSATISFIED_NETWORK_REQUESTS_AFTER_DETACHED_DELAY_MILLIS =
+            TimeUnit.SECONDS.toMillis(1);
+
     protected final Phone mPhone;
     private final String mLogTag;
     private final LocalLog mLocalLog = new LocalLog(128);
@@ -234,6 +242,7 @@ public class DataNetworkController extends Handler {
     protected final @NonNull AccessNetworksManager mAccessNetworksManager;
     protected final @NonNull DataRetryManager mDataRetryManager;
     private final @NonNull ImsManager mImsManager;
+    private final @NonNull TelecomManager mTelecomManager;
     private final @NonNull NetworkPolicyManager mNetworkPolicyManager;
     protected final @NonNull SparseArray<DataServiceManager> mDataServiceManagers =
             new SparseArray<>();
@@ -326,11 +335,8 @@ public class DataNetworkController extends Handler {
      */
     private final @NonNull SparseArray<ImsStateCallback> mImsStateCallbacks = new SparseArray<>();
 
-    /**
-     * The transport on which IMS features are registered. Key is the IMS feature, value is the
-     * transport. Unregistered IMS features are removed from the set.
-     */
-    private final @NonNull SparseIntArray mRegisteredImsFeaturesTransport = new SparseIntArray(2);
+    /** Registered IMS features. Unregistered IMS features are removed from the set. */
+    private final @NonNull Set<Integer> mRegisteredImsFeatures = new ArraySet<>();
 
     /** IMS feature package names. Key is the IMS feature, value is the package name. */
     private final @NonNull SparseArray<String> mImsFeaturePackageName = new SparseArray<>();
@@ -556,10 +562,10 @@ public class DataNetworkController extends Handler {
         /**
          * Called when internet data network is connected.
          *
-         * @param dataProfiles The data profiles of the connected internet data network. It should
-         * be only one in most of the cases.
+         * @param internetNetworks The connected internet data network. It should be only one in
+         *                         most of the cases.
          */
-        public void onInternetDataNetworkConnected(@NonNull List<DataProfile> dataProfiles) {}
+        public void onInternetDataNetworkConnected(@NonNull List<DataNetwork> internetNetworks) {}
 
         /**
          * Called when data network is connected.
@@ -933,6 +939,7 @@ public class DataNetworkController extends Handler {
                 });
         mImsManager = mPhone.getContext().getSystemService(ImsManager.class);
         mNetworkPolicyManager = mPhone.getContext().getSystemService(NetworkPolicyManager.class);
+        mTelecomManager = mPhone.getContext().getSystemService(TelecomManager.class);
 
         // Use the raw one from ServiceStateTracker instead of the combined one from
         // mPhone.getServiceState().
@@ -1607,7 +1614,7 @@ public class DataNetworkController extends Handler {
                 evaluation.addDataAllowedReason(DataAllowedReason.MMS_REQUEST);
             }
         } else if (!evaluation.containsHardDisallowedReasons()) {
-            if ((mPhone.isInEmergencyCall() || mPhone.isInEcm())
+            if ((mTelecomManager.isInEmergencyCall() || mPhone.isInEcm())
                     && networkRequest.hasCapability(NetworkCapabilities.NET_CAPABILITY_SUPL)) {
                 // Check if it's SUPL during emergency call.
                 evaluation.addDataAllowedReason(DataAllowedReason.EMERGENCY_SUPL);
@@ -1855,10 +1862,7 @@ public class DataNetworkController extends Handler {
         }
 
         // Check if data is disabled
-        boolean dataDisabled = false;
-        if (!mDataSettingsManager.isDataEnabled()) {
-            dataDisabled = true;
-        }
+        boolean dataDisabled = !mDataSettingsManager.isDataEnabled();
 
         // Check if data roaming is disabled
         if (mServiceState.getDataRoaming() && !mDataSettingsManager.isDataRoamingEnabled()) {
@@ -1873,10 +1877,9 @@ public class DataNetworkController extends Handler {
         DataProfile dataProfile = dataNetwork.getDataProfile();
         if (dataProfile.getApnSetting() != null) {
             // Check if data is disabled for the APN type
-            dataDisabled = !mDataSettingsManager.isDataEnabled(DataUtils
-                    .networkCapabilityToApnType(DataUtils
-                            .getHighestPriorityNetworkCapabilityFromDataProfile(
-                                    mDataConfigManager, dataProfile)));
+            dataDisabled = !mDataSettingsManager.isDataEnabled(
+                    DataUtils.networkCapabilityToApnType(
+                            dataNetwork.getApnTypeNetworkCapability()));
 
             // Sometimes network temporarily OOS and network type becomes UNKNOWN. We don't
             // tear down network in that case.
@@ -1908,7 +1911,8 @@ public class DataNetworkController extends Handler {
         // If users switch preferred profile in APN editor, we need to tear down network.
         if (dataNetwork.isInternetSupported()
                 && !mDataProfileManager.isDataProfilePreferred(dataProfile)
-                && mDataProfileManager.isAnyPreferredDataProfileExisting()) {
+                && mDataProfileManager.canPreferredDataProfileSatisfy(
+                        dataNetwork.getAttachedNetworkRequestList())) {
             evaluation.addDataDisallowedReason(DataDisallowedReason.DATA_PROFILE_NOT_PREFERRED);
         }
 
@@ -1920,7 +1924,8 @@ public class DataNetworkController extends Handler {
             // If there are reasons we should tear down the network, check if those are hard reasons
             // or soft reasons. In some scenarios, we can make exceptions if they are soft
             // disallowed reasons.
-            if ((mPhone.isInEmergencyCall() || mPhone.isInEcm()) && dataNetwork.isEmergencySupl()) {
+            if ((mTelecomManager.isInEmergencyCall() || mPhone.isInEcm())
+                    && dataNetwork.isEmergencySupl()) {
                 // Check if it's SUPL during emergency call.
                 evaluation.addDataAllowedReason(DataAllowedReason.EMERGENCY_SUPL);
             } else if (!dataNetwork.getNetworkCapabilities().hasCapability(
@@ -2169,6 +2174,23 @@ public class DataNetworkController extends Handler {
     }
 
     /**
+     * @return List of active cellular interfaces.
+     */
+    public List<String> getAllActiveCellularInterfaces() {
+        List<String> ifaces = mDataNetworkList.stream()
+                .filter(dataNetwork -> dataNetwork.getTransport()
+                        == AccessNetworkConstants.TRANSPORT_TYPE_WWAN)
+                .filter(dataNetwork -> dataNetwork.isConnected())
+                .map(DataNetwork::getLinkProperties)
+                .map(LinkProperties::getInterfaceName)
+                .collect(Collectors.toList());
+        for(String iface : ifaces) {
+            log("getAllActiveCellularInterfaces All Interfaces: " + iface);
+        }
+        return ifaces;
+    }
+
+    /**
      * @return {@code true} if data is dormant.
      */
     private boolean isDataDormant() {
@@ -2231,7 +2253,8 @@ public class DataNetworkController extends Handler {
         }
 
         if (networkRequest.getAttachedNetwork() != null) {
-            networkRequest.getAttachedNetwork().detachNetworkRequest(networkRequest);
+            networkRequest.getAttachedNetwork().detachNetworkRequest(
+                        networkRequest, false /* shouldRetry */);
             log("onRemoveNetworkRequest: Network request Removed: " + networkRequest);
         }
     }
@@ -2275,18 +2298,17 @@ public class DataNetworkController extends Handler {
         RegistrationManager.RegistrationCallback callback =
                 new RegistrationManager.RegistrationCallback() {
                     @Override
-                    public void onRegistered(@NonNull ImsRegistrationAttributes attributes) {
+                    public void onRegistered(ImsRegistrationAttributes attributes) {
                         log("IMS " + DataUtils.imsFeatureToString(imsFeature)
                                 + " registered. Attributes=" + attributes);
-                        mRegisteredImsFeaturesTransport.put(
-                                imsFeature, attributes.getTransportType());
+                        mRegisteredImsFeatures.add(imsFeature);
                     }
 
                     @Override
                     public void onUnregistered(ImsReasonInfo info) {
                         log("IMS " + DataUtils.imsFeatureToString(imsFeature)
                                 + " deregistered. Info=" + info);
-                        mRegisteredImsFeaturesTransport.delete(imsFeature);
+                        mRegisteredImsFeatures.remove(imsFeature);
                         evaluatePendingImsDeregDataNetworks();
                     }
                 };
@@ -2629,6 +2651,13 @@ public class DataNetworkController extends Handler {
                     public void onTrackNetworkUnwanted(@NonNull DataNetwork dataNetwork) {
                         DataNetworkController.this.onTrackNetworkUnwanted();
                     }
+
+                    @Override
+                    public void onRetryUnsatisfiedNetworkRequest(
+                            @NonNull TelephonyNetworkRequest networkRequest) {
+                        DataNetworkController.this.onRetryUnsatisfiedNetworkRequest(
+                                networkRequest);
+                    }
                 }
         ));
         if (!mAnyDataNetworkExisting) {
@@ -2805,8 +2834,9 @@ public class DataNetworkController extends Handler {
                 telephonyNetworkRequest, DataEvaluationReason.DATA_RETRY);
         if (!evaluation.containsDisallowedReasons()) {
             DataProfile dataProfile = dataSetupRetryEntry.dataProfile;
-            if (dataProfile == null) {
-                dataProfile = evaluation.getCandidateDataProfile();
+            DataProfile candidateDataProfile = evaluation.getCandidateDataProfile();
+            if (dataProfile == null || (!dataProfile.equals(candidateDataProfile))) {
+                dataProfile = candidateDataProfile;
             }
             if (dataProfile != null) {
                 setupDataNetwork(dataProfile, dataSetupRetryEntry,
@@ -2971,16 +3001,6 @@ public class DataNetworkController extends Handler {
             mImsDataNetworkState = TelephonyManager.DATA_DISCONNECTED;
         }
 
-        if (!mPendingTearDownAllNetworks) {
-            // Immediately reestablish on target transport if network was torn down due to policy
-            long delayMillis = tearDownReason == DataNetwork.TEAR_DOWN_REASON_HANDOVER_NOT_ALLOWED
-                    ? 0 : mDataConfigManager.getRetrySetupAfterDisconnectMillis();
-            // Sometimes network was unsolicitedly reported lost for reasons. We should re-evaluate
-            // and see if data network can be re-established again.
-            sendMessageDelayed(obtainMessage(EVENT_REEVALUATE_UNSATISFIED_NETWORK_REQUESTS,
-                    DataEvaluationReason.RETRY_AFTER_DISCONNECTED), delayMillis);
-        }
-
         if (mAnyDataNetworkExisting && mDataNetworkList.isEmpty()) {
             log("All data networks disconnected now.");
             mPendingTearDownAllNetworks = false;
@@ -2988,6 +3008,14 @@ public class DataNetworkController extends Handler {
             mDataNetworkControllerCallbacks.forEach(callback -> callback.invokeFromExecutor(
                     () -> callback.onAnyDataNetworkExistingChanged(mAnyDataNetworkExisting)));
         }
+
+        // Immediately reestablish on target transport if network was torn down due to policy
+        long delayMillis = tearDownReason == DataNetwork.TEAR_DOWN_REASON_HANDOVER_NOT_ALLOWED
+                ? 0 : mDataConfigManager.getRetrySetupAfterDisconnectMillis();
+        // Sometimes network was unsolicitedly reported lost for reasons. We should re-evaluate
+        // and see if data network can be re-established again.
+        sendMessageDelayed(obtainMessage(EVENT_REEVALUATE_UNSATISFIED_NETWORK_REQUESTS,
+                        DataEvaluationReason.RETRY_AFTER_DISCONNECTED), delayMillis);
     }
 
     /**
@@ -3082,6 +3110,20 @@ public class DataNetworkController extends Handler {
     private void onAttachNetworkRequestsFailed(@NonNull DataNetwork dataNetwork,
             @NonNull NetworkRequestList requestList) {
         log("Failed to attach " + requestList + " to " + dataNetwork);
+    }
+
+    /**
+     * Called when a network request is detached from the data network and should be retried.
+     *
+     * @param networkRequest The detached network request.
+     */
+    private void onRetryUnsatisfiedNetworkRequest(
+            @NonNull TelephonyNetworkRequest networkRequest) {
+        if (!mAllNetworkRequestList.contains(networkRequest)) return;
+
+        sendMessageDelayed(obtainMessage(EVENT_REEVALUATE_UNSATISFIED_NETWORK_REQUESTS,
+                        DataEvaluationReason.UNSATISFIED_REQUEST_DETACHED),
+                REEVALUATE_UNSATISFIED_NETWORK_REQUESTS_AFTER_DETACHED_DELAY_MILLIS);
     }
 
     /**
@@ -3534,9 +3576,7 @@ public class DataNetworkController extends Handler {
                     && mInternetDataNetworkState == TelephonyManager.DATA_DISCONNECTED) {
                 mDataNetworkControllerCallbacks.forEach(callback -> callback.invokeFromExecutor(
                         () -> callback.onInternetDataNetworkConnected(
-                                allConnectedInternetDataNetworks.stream()
-                                        .map(DataNetwork::getDataProfile)
-                                        .collect(Collectors.toList()))));
+                                allConnectedInternetDataNetworks)));
             } else if (dataNetworkState == TelephonyManager.DATA_DISCONNECTED
                     && mInternetDataNetworkState == TelephonyManager.DATA_CONNECTED) {
                 mDataNetworkControllerCallbacks.forEach(callback -> callback.invokeFromExecutor(
@@ -3716,23 +3756,22 @@ public class DataNetworkController extends Handler {
     }
 
     /**
-     * Check if the data network is safe to tear down at this moment. A network is considered safe
-     * to tear down if No IMS/RCS registration is relying on it. We infer a network is Not safe to
-     * tear down if 1) the network is on the transport where the IMS/RCS feature registration
-     * took place, and 2) the network has requests originated from the IMS/RCS service.
+     * Check if the data network is safe to tear down at this moment.
      *
      * @param dataNetwork The data network.
-     * @return {@code true} if the data network is safe to tear down; {@code false} otherwise.
+     * @return {@code true} if the data network is safe to tear down. {@code false} indicates this
+     * data network has requests originated from the IMS/RCS service and IMS/RCS is not
+     * de-registered yet.
      */
     private boolean isSafeToTearDown(@NonNull DataNetwork dataNetwork) {
         for (int imsFeature : SUPPORTED_IMS_FEATURES) {
-            int registeredOnTransport = mRegisteredImsFeaturesTransport.get(imsFeature,
-                    AccessNetworkConstants.TRANSPORT_TYPE_INVALID);
-            if (dataNetwork.getTransport() == registeredOnTransport) {
-                String imsFeaturePackage = mImsFeaturePackageName.get(imsFeature);
-                if (imsFeaturePackage != null && dataNetwork.getAttachedNetworkRequestList()
+            String imsFeaturePackage = mImsFeaturePackageName.get(imsFeature);
+            if (imsFeaturePackage != null) {
+                if (dataNetwork.getAttachedNetworkRequestList()
                         .hasNetworkRequestsFromPackage(imsFeaturePackage)) {
-                    return false;
+                    if (mRegisteredImsFeatures.contains(imsFeature)) {
+                        return false;
+                    }
                 }
             }
         }
@@ -3756,19 +3795,13 @@ public class DataNetworkController extends Handler {
     private void tearDownGracefully(@NonNull DataNetwork dataNetwork, @TearDownReason int reason) {
         long deregDelay = mDataConfigManager.getImsDeregistrationDelay();
         if (isImsGracefulTearDownSupported() && !isSafeToTearDown(dataNetwork)) {
-            int mmtelTransport = mRegisteredImsFeaturesTransport.get(ImsFeature.FEATURE_MMTEL,
-                    AccessNetworkConstants.TRANSPORT_TYPE_INVALID);
-            int rcsTransport = mRegisteredImsFeaturesTransport.get(ImsFeature.FEATURE_RCS,
-                    AccessNetworkConstants.TRANSPORT_TYPE_INVALID);
             log("tearDownGracefully: Not safe to tear down " + dataNetwork
                     + " at this point. Wait for IMS de-registration or timeout. MMTEL="
-                    + (mmtelTransport != AccessNetworkConstants.TRANSPORT_TYPE_INVALID
-                    ? "registered on " + AccessNetworkConstants.transportTypeToString(
-                            mmtelTransport) : "not registered")
+                    + (mRegisteredImsFeatures.contains(ImsFeature.FEATURE_MMTEL)
+                    ? "registered" : "not registered")
                     + ", RCS="
-                    + (rcsTransport != AccessNetworkConstants.TRANSPORT_TYPE_INVALID
-                    ? "registered on " + AccessNetworkConstants.transportTypeToString(
-                            rcsTransport) : "not registered")
+                    + (mRegisteredImsFeatures.contains(ImsFeature.FEATURE_RCS)
+                    ? "registered" : "not registered")
             );
             Runnable runnable = dataNetwork.tearDownWhenConditionMet(reason, deregDelay);
             if (runnable != null) {
@@ -3881,18 +3914,13 @@ public class DataNetworkController extends Handler {
             pw.println(networkRequest);
         }
         pw.decreaseIndent();
-        int mmtelTransport = mRegisteredImsFeaturesTransport.get(ImsFeature.FEATURE_MMTEL,
-                AccessNetworkConstants.TRANSPORT_TYPE_INVALID);
-        int rcsTransport = mRegisteredImsFeaturesTransport.get(ImsFeature.FEATURE_RCS,
-                AccessNetworkConstants.TRANSPORT_TYPE_INVALID);
+
         pw.println("IMS features registration state: MMTEL="
-                + (mmtelTransport != AccessNetworkConstants.TRANSPORT_TYPE_INVALID
-                ? "registered on " + AccessNetworkConstants.transportTypeToString(
-                        mmtelTransport) : "not registered")
+                + (mRegisteredImsFeatures.contains(ImsFeature.FEATURE_MMTEL)
+                ? "registered" : "not registered")
                 + ", RCS="
-                + (rcsTransport != AccessNetworkConstants.TRANSPORT_TYPE_INVALID
-                ? "registered on " + AccessNetworkConstants.transportTypeToString(
-                rcsTransport) : "not registered"));
+                + (mRegisteredImsFeatures.contains(ImsFeature.FEATURE_RCS)
+                ? "registered" : "not registered"));
         pw.println("mServiceState=" + mServiceState);
         pw.println("mPsRestricted=" + mPsRestricted);
         pw.println("mAnyDataNetworkExisting=" + mAnyDataNetworkExisting);

@@ -117,6 +117,7 @@ import static com.android.internal.telephony.RILConstants.RIL_REQUEST_IMS_SEND_S
 import static com.android.internal.telephony.RILConstants.RIL_REQUEST_ISIM_AUTHENTICATION;
 import static com.android.internal.telephony.RILConstants.RIL_REQUEST_IS_N1_MODE_ENABLED;
 import static com.android.internal.telephony.RILConstants.RIL_REQUEST_IS_NR_DUAL_CONNECTIVITY_ENABLED;
+import static com.android.internal.telephony.RILConstants.RIL_REQUEST_IS_NULL_CIPHER_AND_INTEGRITY_ENABLED;
 import static com.android.internal.telephony.RILConstants.RIL_REQUEST_IS_VONR_ENABLED;
 import static com.android.internal.telephony.RILConstants.RIL_REQUEST_LAST_CALL_FAIL_CAUSE;
 import static com.android.internal.telephony.RILConstants.RIL_REQUEST_LAST_DATA_CALL_FAIL_CAUSE;
@@ -271,6 +272,7 @@ import static com.android.internal.telephony.RILConstants.RIL_UNSOL_RINGBACK_TON
 import static com.android.internal.telephony.RILConstants.RIL_UNSOL_SIGNAL_STRENGTH;
 import static com.android.internal.telephony.RILConstants.RIL_UNSOL_SIM_REFRESH;
 import static com.android.internal.telephony.RILConstants.RIL_UNSOL_SIM_SMS_STORAGE_FULL;
+import static com.android.internal.telephony.RILConstants.RIL_UNSOL_SLICING_CONFIG_CHANGED;
 import static com.android.internal.telephony.RILConstants.RIL_UNSOL_SRVCC_STATE_NOTIFY;
 import static com.android.internal.telephony.RILConstants.RIL_UNSOL_STK_CALL_SETUP;
 import static com.android.internal.telephony.RILConstants.RIL_UNSOL_STK_CC_ALPHA_NOTIFY;
@@ -3310,7 +3312,7 @@ public class RILUtils {
         return new CellSignalStrengthNr(CellSignalStrengthNr.flip(ss.csiRsrp),
                 CellSignalStrengthNr.flip(ss.csiRsrq), ss.csiSinr, ss.csiCqiTableIndex,
                 primitiveArrayToArrayList(ss.csiCqiReport), CellSignalStrengthNr.flip(ss.ssRsrp),
-                CellSignalStrengthNr.flip(ss.ssRsrq), ss.ssSinr, CellInfo.UNAVAILABLE);
+                CellSignalStrengthNr.flip(ss.ssRsrq), ss.ssSinr, ss.timingAdvance);
     }
 
     private static ClosedSubscriberGroupInfo convertHalClosedSubscriberGroupInfo(
@@ -4614,12 +4616,14 @@ public class RILUtils {
     public static PhoneCapability convertHalPhoneCapability(int[] deviceNrCapabilities, Object o) {
         int maxActiveVoiceCalls = 0;
         int maxActiveData = 0;
+        int maxActiveInternetData = 0;
         boolean validationBeforeSwitchSupported = false;
         List<ModemInfo> logicalModemList = new ArrayList<>();
         if (o instanceof android.hardware.radio.config.PhoneCapability) {
             final android.hardware.radio.config.PhoneCapability phoneCapability =
                     (android.hardware.radio.config.PhoneCapability) o;
             maxActiveData = phoneCapability.maxActiveData;
+            maxActiveInternetData = phoneCapability.maxActiveInternetData;
             validationBeforeSwitchSupported = phoneCapability.isInternetLingeringSupported;
             for (int modemId : phoneCapability.logicalModemIds) {
                 logicalModemList.add(new ModemInfo(modemId));
@@ -4628,13 +4632,16 @@ public class RILUtils {
             final android.hardware.radio.config.V1_1.PhoneCapability phoneCapability =
                     (android.hardware.radio.config.V1_1.PhoneCapability) o;
             maxActiveData = phoneCapability.maxActiveData;
+            maxActiveInternetData = phoneCapability.maxActiveInternetData;
             validationBeforeSwitchSupported = phoneCapability.isInternetLingeringSupported;
             for (android.hardware.radio.config.V1_1.ModemInfo modemInfo :
                     phoneCapability.logicalModemList) {
                 logicalModemList.add(new ModemInfo(modemInfo.modemId));
             }
         }
-        maxActiveVoiceCalls = maxActiveData;
+        // maxActiveInternetData defines how many logical modems can have internet PDN connections
+        // simultaneously. For L+L DSDS modem it’s 1, and for DSDA modem it’s 2.
+        maxActiveVoiceCalls = maxActiveInternetData;
         return new PhoneCapability(maxActiveVoiceCalls, maxActiveData, logicalModemList,
                 validationBeforeSwitchSupported, deviceNrCapabilities);
     }
@@ -5261,6 +5268,9 @@ public class RILUtils {
                 return "GET_SIM_PHONEBOOK_RECORDS";
             case RIL_REQUEST_UPDATE_SIM_PHONEBOOK_RECORD:
                 return "UPDATE_SIM_PHONEBOOK_RECORD";
+            case RIL_REQUEST_DEVICE_IMEI:
+                return "DEVICE_IMEI";
+            /* The following requests are not defined in RIL.h */
             case RIL_REQUEST_GET_SLOT_STATUS:
                 return "GET_SLOT_STATUS";
             case RIL_REQUEST_SET_LOGICAL_TO_PHYSICAL_SLOT_MAPPING:
@@ -5343,14 +5353,14 @@ public class RILUtils {
                 return "TRIGGER_EPS_FALLBACK";
             case RIL_REQUEST_SET_NULL_CIPHER_AND_INTEGRITY_ENABLED:
                 return "SET_NULL_CIPHER_AND_INTEGRITY_ENABLED";
+            case RIL_REQUEST_IS_NULL_CIPHER_AND_INTEGRITY_ENABLED:
+                return "IS_NULL_CIPHER_AND_INTEGRITY_ENABLED";
             case RIL_REQUEST_UPDATE_IMS_CALL_STATUS:
                 return "UPDATE_IMS_CALL_STATUS";
             case RIL_REQUEST_SET_N1_MODE_ENABLED:
                 return "SET_N1_MODE_ENABLED";
             case RIL_REQUEST_IS_N1_MODE_ENABLED:
                 return "IS_N1_MODE_ENABLED";
-            case RIL_REQUEST_DEVICE_IMEI:
-                return "DEVICE_IMEI";
             default:
                 return "<unknown request " + request + ">";
         }
@@ -5471,6 +5481,9 @@ public class RILUtils {
                 return "UNSOL_RESPONSE_SIM_PHONEBOOK_CHANGED";
             case RIL_UNSOL_RESPONSE_SIM_PHONEBOOK_RECORDS_RECEIVED:
                 return "UNSOL_RESPONSE_SIM_PHONEBOOK_RECORDS_RECEIVED";
+            case RIL_UNSOL_SLICING_CONFIG_CHANGED:
+                return "UNSOL_SLICING_CONFIG_CHANGED";
+            /* The follow unsols are not defined in RIL.h */
             case RIL_UNSOL_ICC_SLOT_STATUS:
                 return "UNSOL_ICC_SLOT_STATUS";
             case RIL_UNSOL_PHYSICAL_CHANNEL_CONFIG:
@@ -5485,14 +5498,14 @@ public class RILUtils {
                 return "UNSOL_BARRING_INFO_CHANGED";
             case RIL_UNSOL_EMERGENCY_NETWORK_SCAN_RESULT:
                 return "UNSOL_EMERGENCY_NETWORK_SCAN_RESULT";
+            case RIL_UNSOL_TRIGGER_IMS_DEREGISTRATION:
+                return "UNSOL_TRIGGER_IMS_DEREGISTRATION";
             case RIL_UNSOL_CONNECTION_SETUP_FAILURE:
                 return "UNSOL_CONNECTION_SETUP_FAILURE";
             case RIL_UNSOL_NOTIFY_ANBR:
                 return "UNSOL_NOTIFY_ANBR";
-            case RIL_UNSOL_TRIGGER_IMS_DEREGISTRATION:
-                return "UNSOL_TRIGGER_IMS_DEREGISTRATION";
             default:
-                return "<unknown response>";
+                return "<unknown response " + response + ">";
         }
     }
 

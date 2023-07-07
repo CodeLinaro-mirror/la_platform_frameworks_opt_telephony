@@ -373,6 +373,9 @@ public class UiccSlot extends Handler {
         }
         // no card present in the slot now; dispose port and then card if needed.
         disposeUiccCardIfNeeded(false /* sim state is not unknown */, portIndex);
+        // If SLOT_STATUS is the last event, wrong subscription is getting invalidate during
+        // slot switch event. To avoid it, reset the phoneId corresponding to the portIndex.
+        mPortIdxToPhoneId.put(portIndex, INVALID_PHONE_ID);
         mLastRadioState.put(portIndex, TelephonyManager.RADIO_POWER_UNAVAILABLE);
     }
 
@@ -388,13 +391,15 @@ public class UiccSlot extends Handler {
     }
 
     private void disposeUiccCardIfNeeded(boolean isStateUnknown, int portIndex) {
-        // First dispose UiccPort corresponding to the portIndex
         if (mUiccCard != null) {
+            // First dispose UiccPort corresponding to the portIndex
             mUiccCard.disposePort(portIndex);
             if (ArrayUtils.isEmpty(mUiccCard.getUiccPortList())) {
                 // No UiccPort objects are found, safe to dispose the card
                 nullifyUiccCard(isStateUnknown);
             }
+        } else {
+            mStateIsUnknown = isStateUnknown;
         }
     }
 

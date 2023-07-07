@@ -99,7 +99,6 @@ import com.android.internal.telephony.data.DataNetworkController;
 import com.android.internal.telephony.data.DataSettingsManager;
 import com.android.internal.telephony.data.LinkBandwidthEstimator;
 import com.android.internal.telephony.domainselection.DomainSelectionResolver;
-import com.android.internal.telephony.dataconnection.DataEnabledSettings;
 import com.android.internal.telephony.EcbmHandler;
 import com.android.internal.telephony.emergency.EmergencyConstants;
 import com.android.internal.telephony.emergency.EmergencyNumberTracker;
@@ -375,7 +374,6 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     protected DeviceStateMonitor mDeviceStateMonitor;
     protected DisplayInfoController mDisplayInfoController;
     protected AccessNetworksManager mAccessNetworksManager;
-    protected DataEnabledSettings mDataEnabledSettings;
     // Used for identify the carrier of current subscription
     protected CarrierResolver mCarrierResolver;
     protected SignalStrengthController mSignalStrengthController;
@@ -1483,8 +1481,8 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     @UnsupportedAppUsage
     public void setNetworkSelectionModeAutomatic(Message response) {
         Rlog.d(LOG_TAG, "setNetworkSelectionModeAutomatic, querying current mode");
-        // we don't want to do this unecesarily - it acutally causes
-        // the radio to repeate network selection and is costly
+        // we don't want to do this unnecessarily - it actually causes
+        // the radio to repeat network selection and is costly
         // first check if we're already in automatic mode
         Message msg = obtainMessage(EVENT_CHECK_FOR_NETWORK_AUTOMATIC);
         msg.obj = response;
@@ -1517,6 +1515,7 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
         nsm.operatorAlphaShort = "";
 
         if (doAutomatic) {
+            Rlog.d(LOG_TAG, "setNetworkSelectionModeAutomatic - set network selection auto");
             Message msg = obtainMessage(EVENT_SET_NETWORK_AUTOMATIC_COMPLETE, nsm);
             mCi.setNetworkSelectionModeAutomatic(msg);
         } else {
@@ -4722,10 +4721,6 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
         return false;
     }
 
-    public DataEnabledSettings getDataEnabledSettings() {
-        return mDataEnabledSettings;
-    }
-
     @UnsupportedAppUsage
     public IccSmsInterfaceManager getIccSmsInterfaceManager(){
         return null;
@@ -5430,6 +5425,14 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     }
 
     /**
+     * Check whether the satellite modem is provisioned.
+     * @param result The Message to send the result of the operation to.
+     */
+    public void isSatelliteProvisioned(Message result) {
+        mCi.getSatelliteProvisionState(result);
+    }
+
+    /**
      * Get the satellite capabilities.
      * @param result The Message to send the result of the operation to.
      */
@@ -5660,7 +5663,7 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
         mNotifier.notifyCallbackModeStopped(this, type, reason);
     }
 
-    private boolean isActiveSubId(int subId) {
+    protected boolean isActiveSubId(int subId) {
         if (PhoneFactory.isSubscriptionManagerServiceEnabled()) {
             SubscriptionInfoInternal subInfo = SubscriptionManagerService.getInstance()
                     .getSubscriptionInfoInternal(subId);

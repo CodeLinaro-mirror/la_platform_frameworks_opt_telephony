@@ -3879,6 +3879,7 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                 // Since onCallInitiating and onCallProgressing reset mPendingMO,
                 // we can't depend on mPendingMO.
                 if ((reasonInfo.getCode() == ImsReasonInfo.CODE_SIP_ALTERNATE_EMERGENCY_CALL
+                        || reasonInfo.getCode() == ImsReasonInfo.CODE_LOCAL_NOT_REGISTERED
                         || reasonInfo.getCode() == ImsReasonInfo.CODE_LOCAL_CALL_CS_RETRY_REQUIRED)
                         && conn != null) {
                     logi("onCallStartFailed eccCategory=" + eccCategory);
@@ -4022,6 +4023,12 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
             if (cause == DisconnectCause.NORMAL && conn != null && conn.getImsCall().isMerged()) {
                 // Call was terminated while it is merged instead of a remote disconnect.
                 cause = DisconnectCause.IMS_MERGED_SUCCESSFULLY;
+            }
+
+            // Ensure the background call is correctly marked as MERGE_COMPLETE before it is
+            // disconnected as part of the IMS merge conference process:
+            if (cause == DisconnectCause.IMS_MERGED_SUCCESSFULLY && conn != null) {
+                conn.onConnectionEvent(android.telecom.Connection.EVENT_MERGE_COMPLETE, null);
             }
 
             EmergencyNumberTracker emergencyNumberTracker = null;

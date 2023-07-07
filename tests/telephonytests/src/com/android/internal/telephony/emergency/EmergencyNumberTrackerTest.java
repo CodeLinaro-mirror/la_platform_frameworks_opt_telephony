@@ -16,8 +16,6 @@
 
 package com.android.internal.telephony.emergency;
 
-import static android.telephony.TelephonyManager.HAL_SERVICE_VOICE;
-
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -42,6 +40,7 @@ import android.os.Environment;
 import android.os.ParcelFileDescriptor;
 import android.os.PersistableBundle;
 import android.telephony.CarrierConfigManager;
+import android.telephony.ServiceState;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
 import android.telephony.emergency.EmergencyNumber;
@@ -50,9 +49,9 @@ import android.testing.TestableLooper;
 
 import androidx.test.InstrumentationRegistry;
 
-import com.android.internal.telephony.HalVersion;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneFactory;
+import com.android.internal.telephony.ServiceStateTracker;
 import com.android.internal.telephony.SubscriptionController;
 import com.android.internal.telephony.TelephonyTest;
 
@@ -150,12 +149,10 @@ public class EmergencyNumberTrackerTest extends TelephonyTest {
         doReturn(mContext).when(mPhone).getContext();
         doReturn(0).when(mPhone).getPhoneId();
         doReturn(SUB_ID_PHONE_1).when(mPhone).getSubId();
-        doReturn(new HalVersion(1, 4)).when(mPhone).getHalVersion(HAL_SERVICE_VOICE);
 
         doReturn(mContext).when(mPhone2).getContext();
         doReturn(1).when(mPhone2).getPhoneId();
         doReturn(SUB_ID_PHONE_2).when(mPhone2).getSubId();
-        doReturn(new HalVersion(1, 4)).when(mPhone2).getHalVersion(HAL_SERVICE_VOICE);
 
         initializeEmergencyNumberListTestSamples();
         mEmergencyNumberTrackerMock = new EmergencyNumberTracker(mPhone, mSimulatedCommands);
@@ -391,8 +388,31 @@ public class EmergencyNumberTrackerTest extends TelephonyTest {
         IntentFilter ifilter = intentCaptor.getValue();
         assertTrue(ifilter.hasAction(TelephonyManager.ACTION_NETWORK_COUNTRY_CHANGED));
     }
+
     @Test
-    public void testUpdateEmergencyCountryIso() throws Exception {
+    public void testUpdateEmergencyCountryIso_whenStatePowerOff() throws Exception {
+        testUpdateEmergencyCountryIso(ServiceState.STATE_POWER_OFF);
+    }
+
+    @Test
+    public void testUpdateEmergencyCountryIso_whenStateInService() throws Exception {
+        testUpdateEmergencyCountryIso(ServiceState.STATE_IN_SERVICE);
+    }
+
+    @Test
+    public void testUpdateEmergencyCountryIso_whenStateOos() throws Exception {
+        testUpdateEmergencyCountryIso(ServiceState.STATE_OUT_OF_SERVICE);
+    }
+
+    @Test
+    public void testUpdateEmergencyCountryIso_whenStateEmergencyOnly() throws Exception {
+        testUpdateEmergencyCountryIso(ServiceState.STATE_EMERGENCY_ONLY);
+    }
+
+    private void testUpdateEmergencyCountryIso(int ss) throws Exception {
+        doReturn(mLocaleTracker).when(mSST).getLocaleTracker();
+        doReturn("us").when(mLocaleTracker).getLastKnownCountryIso();
+
         sendEmergencyNumberPrefix(mEmergencyNumberTrackerMock);
 
         mEmergencyNumberTrackerMock.updateEmergencyNumberDatabaseCountryChange("us");
@@ -400,10 +420,14 @@ public class EmergencyNumberTrackerTest extends TelephonyTest {
         assertTrue(mEmergencyNumberTrackerMock.getEmergencyCountryIso().equals("us"));
         assertTrue(mEmergencyNumberTrackerMock.getLastKnownEmergencyCountryIso().equals("us"));
 
+        doReturn(ss).when(mServiceState).getState();
         mEmergencyNumberTrackerMock.updateEmergencyNumberDatabaseCountryChange("");
         processAllMessages();
         assertTrue(mEmergencyNumberTrackerMock.getEmergencyCountryIso().equals(""));
         assertTrue(mEmergencyNumberTrackerMock.getLastKnownEmergencyCountryIso().equals("us"));
+
+        //make sure we look up cached location whenever current iso is null
+        verify(mLocaleTracker).getLastKnownCountryIso();
     }
 
     @Test
@@ -429,10 +453,6 @@ public class EmergencyNumberTrackerTest extends TelephonyTest {
 
     @Test
     public void testIsEmergencyNumber_FallbackToShortNumberXml_NoSims() throws Exception {
-        // Set up the Hal version as 1.4
-        doReturn(new HalVersion(1, 4)).when(mPhone).getHalVersion(HAL_SERVICE_VOICE);
-        doReturn(new HalVersion(1, 4)).when(mPhone2).getHalVersion(HAL_SERVICE_VOICE);
-
         setDsdsPhones();
         replaceInstance(SubscriptionController.class, "sInstance", null, mSubControllerMock);
 
@@ -469,10 +489,6 @@ public class EmergencyNumberTrackerTest extends TelephonyTest {
     }
 
     private void testIsEmergencyNumber_NoFallbackToShortNumberXml(int numSims) throws Exception {
-        // Set up the Hal version as 1.4
-        doReturn(new HalVersion(1, 4)).when(mPhone).getHalVersion(HAL_SERVICE_VOICE);
-        doReturn(new HalVersion(1, 4)).when(mPhone2).getHalVersion(HAL_SERVICE_VOICE);
-
         assertTrue((numSims > 0 && numSims < 3));
         setDsdsPhones();
         replaceInstance(SubscriptionController.class, "sInstance", null, mSubControllerMock);
@@ -545,34 +561,6 @@ public class EmergencyNumberTrackerTest extends TelephonyTest {
         processAllMessages();
         assertTrue(mEmergencyNumberTrackerMock.getEmergencyCountryIso().equals("ca"));
         assertTrue(mEmergencyNumberTrackerMock2.getEmergencyCountryIso().equals("us"));
-    }
-
-    /**
-     * In 1.3 or less HAL. we should not use database number.
-     */
-    @Test
-    public void testUsingEmergencyNumberDatabaseWheneverHal_1_3() {
-        doReturn(new HalVersion(1, 3)).when(mPhone).getHalVersion(HAL_SERVICE_VOICE);
-        doReturn(mMockContext).when(mPhone).getContext();
-        doReturn(mResources).when(mMockContext).getResources();
-        doReturn(true).when(mResources).getBoolean(
-                com.android.internal.R.bool.ignore_emergency_number_routing_from_db);
-
-        EmergencyNumberTracker emergencyNumberTracker = new EmergencyNumberTracker(
-                mPhone, mSimulatedCommands);
-
-        sendEmergencyNumberPrefix(emergencyNumberTracker);
-        emergencyNumberTracker.updateEmergencyCountryIsoAllPhones("us");
-        processAllMessages();
-
-        boolean hasDatabaseNumber = false;
-        for (EmergencyNumber number : emergencyNumberTracker.getEmergencyNumberList()) {
-            if (number.isFromSources(EmergencyNumber.EMERGENCY_NUMBER_SOURCE_DATABASE)) {
-                hasDatabaseNumber = true;
-                break;
-            }
-        }
-        assertFalse(hasDatabaseNumber);
     }
 
     /**
@@ -813,9 +801,6 @@ public class EmergencyNumberTrackerTest extends TelephonyTest {
      */
     @Test
     public void testOtaEmergencyNumberDatabase() {
-        // Set up the Hal version as 1.4 to apply emergency number database
-        doReturn(new HalVersion(1, 4)).when(mPhone).getHalVersion(HAL_SERVICE_VOICE);
-
         sendEmergencyNumberPrefix(mEmergencyNumberTrackerMock);
         mEmergencyNumberTrackerMock.updateEmergencyCountryIsoAllPhones("");
         processAllMessages();

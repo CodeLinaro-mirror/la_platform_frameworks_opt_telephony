@@ -92,6 +92,7 @@ import com.android.internal.telephony.cdma.EriManager;
 import com.android.internal.telephony.cdnr.CarrierDisplayNameData;
 import com.android.internal.telephony.cdnr.CarrierDisplayNameResolver;
 import com.android.internal.telephony.data.AccessNetworksManager;
+import com.android.internal.telephony.data.AccessNetworksManager.AccessNetworksManagerCallback;
 import com.android.internal.telephony.data.DataNetwork;
 import com.android.internal.telephony.data.DataNetworkController.DataNetworkControllerCallback;
 import com.android.internal.telephony.imsphone.ImsPhone;
@@ -385,7 +386,6 @@ public class ServiceStateTracker extends Handler {
             // If not, then the subId has changed, so we need to remember the old subId,
             // even if the new subId is invalid (likely).
             mPrevSubId = mSubId;
-            mSubId = curSubId;
 
             // Update voicemail count and notify message waiting changed regardless of
             // whether the new subId is valid. This is an exception to the general logic
@@ -394,80 +394,70 @@ public class ServiceStateTracker extends Handler {
             // which seems desirable.
             mPhone.updateVoiceMail();
 
-            if (!SubscriptionManager.isValidSubscriptionId(mSubId)) {
+            if (!SubscriptionManager.isValidSubscriptionId(curSubId)) {
                 if (SubscriptionManager.isValidSubscriptionId(mPrevSubId)) {
                     // just went from valid to invalid subId, so notify phone state listeners
                     // with final broadcast
                     mPhone.notifyServiceStateChangedForSubId(mOutOfServiceSS,
                             ServiceStateTracker.this.mPrevSubId);
                 }
-                // If the new subscription ID isn't valid, then we don't need to do all the
-                // UI updating, so we're done.
-                return;
-            }
+            } else {
+                Context context = mPhone.getContext();
 
-            Context context = mPhone.getContext();
+                mPhone.notifyPhoneStateChanged();
 
-            mPhone.notifyPhoneStateChanged();
+                if (!SubscriptionManager.isValidSubscriptionId(mPrevSubId)) {
+                    // just went from invalid to valid subId, so notify with current service
+                    // state in case our service state was never broadcasted (we don't notify
+                    // service states when the subId is invalid)
+                    mPhone.notifyServiceStateChanged(mPhone.getServiceState());
+                }
 
-            if (!SubscriptionManager.isValidSubscriptionId(mPrevSubId)) {
-                // just went from invalid to valid subId, so notify with current service
-                // state in case our service state was never broadcasted (we don't notify
-                // service states when the subId is invalid)
-                mPhone.notifyServiceStateChanged(mPhone.getServiceState());
-            }
+                boolean restoreSelection = !context.getResources().getBoolean(
+                        com.android.internal.R.bool.skip_restoring_network_selection);
+                mPhone.sendSubscriptionSettings(restoreSelection);
 
-            boolean restoreSelection = !context.getResources().getBoolean(
-                    com.android.internal.R.bool.skip_restoring_network_selection);
-            mPhone.sendSubscriptionSettings(restoreSelection);
+                setDataNetworkTypeForPhone(mSS.getRilDataRadioTechnology());
 
-            setDataNetworkTypeForPhone(mSS.getRilDataRadioTechnology());
-
-            if (mSpnUpdatePending) {
-                if (mPhone.isSubscriptionManagerServiceEnabled()) {
-                    if (SubscriptionManager.isValidSubscriptionId(mSubId)) {
-                        mSubscriptionManagerService.setCarrierName(mSubId, TextUtils.emptyIfNull(
-                                getCarrierName(mCurShowPlmn, mCurPlmn,
-                                        mCurShowSpn, mCurSpn)));
-                    }
-                } else {
+                if (mSpnUpdatePending) {
                     mSubscriptionController.setPlmnSpn(mPhone.getPhoneId(), mCurShowPlmn,
                             mCurPlmn, mCurShowSpn, mCurSpn);
+                    mSpnUpdatePending = false;
                 }
-                mSpnUpdatePending = false;
-            }
 
-            // Remove old network selection sharedPreferences since SP key names are now
-            // changed to include subId. This will be done only once when upgrading from an
-            // older build that did not include subId in the names.
-            SharedPreferences sp = PreferenceManager.getDefaultSharedPreferences(
-                    context);
-            String oldNetworkSelection = sp.getString(
-                    Phone.NETWORK_SELECTION_KEY, "");
-            String oldNetworkSelectionName = sp.getString(
-                    Phone.NETWORK_SELECTION_NAME_KEY, "");
-            String oldNetworkSelectionShort = sp.getString(
-                    Phone.NETWORK_SELECTION_SHORT_KEY, "");
-            if (!TextUtils.isEmpty(oldNetworkSelection)
-                    || !TextUtils.isEmpty(oldNetworkSelectionName)
-                    || !TextUtils.isEmpty(oldNetworkSelectionShort)) {
-                SharedPreferences.Editor editor = sp.edit();
-                editor.putString(Phone.NETWORK_SELECTION_KEY + mSubId,
-                        oldNetworkSelection);
-                editor.putString(Phone.NETWORK_SELECTION_NAME_KEY + mSubId,
-                        oldNetworkSelectionName);
-                editor.putString(Phone.NETWORK_SELECTION_SHORT_KEY + mSubId,
-                        oldNetworkSelectionShort);
-                editor.remove(Phone.NETWORK_SELECTION_KEY);
-                editor.remove(Phone.NETWORK_SELECTION_NAME_KEY);
-                editor.remove(Phone.NETWORK_SELECTION_SHORT_KEY);
-                editor.commit();
-            }
+                // Remove old network selection sharedPreferences since SP key names are now
+                // changed to include subId. This will be done only once when upgrading from an
+                // older build that did not include subId in the names.
+                SharedPreferences sp = PreferenceManager.getDefaultSharedPreferences(
+                        context);
+                String oldNetworkSelection = sp.getString(
+                        Phone.NETWORK_SELECTION_KEY, "");
+                String oldNetworkSelectionName = sp.getString(
+                        Phone.NETWORK_SELECTION_NAME_KEY, "");
+                String oldNetworkSelectionShort = sp.getString(
+                        Phone.NETWORK_SELECTION_SHORT_KEY, "");
+                if (!TextUtils.isEmpty(oldNetworkSelection)
+                        || !TextUtils.isEmpty(oldNetworkSelectionName)
+                        || !TextUtils.isEmpty(oldNetworkSelectionShort)) {
+                    SharedPreferences.Editor editor = sp.edit();
+                    editor.putString(Phone.NETWORK_SELECTION_KEY + curSubId,
+                            oldNetworkSelection);
+                    editor.putString(Phone.NETWORK_SELECTION_NAME_KEY + curSubId,
+                            oldNetworkSelectionName);
+                    editor.putString(Phone.NETWORK_SELECTION_SHORT_KEY + curSubId,
+                            oldNetworkSelectionShort);
+                    editor.remove(Phone.NETWORK_SELECTION_KEY);
+                    editor.remove(Phone.NETWORK_SELECTION_NAME_KEY);
+                    editor.remove(Phone.NETWORK_SELECTION_SHORT_KEY);
+                    editor.commit();
+                }
 
-            // Once sub id becomes valid, we need to update the service provider name
-            // displayed on the UI again. The old SPN update intents sent to
-            // MobileSignalController earlier were actually ignored due to invalid sub id.
-            updateSpnDisplay();
+                // Once sub id becomes valid, we need to update the service provider name
+                // displayed on the UI again. The old SPN update intents sent to
+                // MobileSignalController earlier were actually ignored due to invalid sub id.
+                updateSpnDisplay();
+            }
+            mSubId = curSubId;
         }
     };
 
@@ -567,8 +557,12 @@ public class ServiceStateTracker extends Handler {
         public void onReceive(Context context, Intent intent) {
             final String action = intent.getAction();
             if (action.equals(Intent.ACTION_LOCALE_CHANGED)) {
+                log("ACTION_LOCALE_CHANGED");
                 // Update emergency string or operator name, polling service state.
                 pollState();
+                // Depends on modem, ServiceState is not necessarily updated, so make sure updating
+                // SPN.
+                updateSpnDisplay();
             } else if (action.equals(TelephonyManager.ACTION_NETWORK_COUNTRY_CHANGED)) {
                 String lastKnownNetworkCountry = intent.getStringExtra(
                         TelephonyManager.EXTRA_LAST_KNOWN_NETWORK_COUNTRY);
@@ -629,6 +623,12 @@ public class ServiceStateTracker extends Handler {
      * subscriptions before powering down the modem.
      */
     private DataNetworkControllerCallback mDataDisconnectedCallback;
+
+    /**
+     * AccessNetworksManagerCallback is used for preferred on the IWLAN when preferred transport
+     * type changed in AccessNetworksManager.
+     */
+    private AccessNetworksManagerCallback mAccessNetworksManagerCallback = null;
 
     public ServiceStateTracker(GsmCdmaPhone phone, CommandsInterface ci) {
         mNitzState = TelephonyComponentFactory.getInstance()
@@ -742,6 +742,23 @@ public class ServiceStateTracker extends Handler {
                 }
             }
         };
+
+        mAccessNetworksManagerCallback = new AccessNetworksManagerCallback(this::post) {
+            @Override
+            public void onPreferredTransportChanged(int networkCapability) {
+                // Check if preferred on IWLAN was changed in ServiceState.
+                boolean isIwlanPreferred = mAccessNetworksManager.isAnyApnOnIwlan();
+                if (mSS.isIwlanPreferred() != isIwlanPreferred) {
+                    log("onPreferredTransportChanged: IwlanPreferred is changed to "
+                            + isIwlanPreferred);
+                    mSS.setIwlanPreferred(isIwlanPreferred);
+                    mPhone.notifyServiceStateChanged(mPhone.getServiceState());
+                }
+            }
+        };
+        if (mAccessNetworksManagerCallback != null) {
+            mAccessNetworksManager.registerCallback(mAccessNetworksManagerCallback);
+        }
     }
 
     @VisibleForTesting
@@ -880,6 +897,10 @@ public class ServiceStateTracker extends Handler {
         if (mCSST != null) {
             mCSST.dispose();
             mCSST = null;
+        }
+        if (mAccessNetworksManagerCallback != null) {
+            mAccessNetworksManager.unregisterCallback(mAccessNetworksManagerCallback);
+            mAccessNetworksManagerCallback = null;
         }
     }
 
@@ -1699,16 +1720,9 @@ public class ServiceStateTracker extends Handler {
                                 .findFirst()
                                 .orElse(PhysicalChannelConfig.PHYSICAL_CELL_ID_UNKNOWN);
                     }
-                    boolean includeLte = mCarrierConfig.getBoolean(CarrierConfigManager
-                            .KEY_INCLUDE_LTE_FOR_NR_ADVANCED_THRESHOLD_BANDWIDTH_BOOL);
                     int[] bandwidths = new int[0];
                     if (list != null) {
-                        bandwidths = list.stream()
-                                .filter(config -> includeLte || config.getNetworkType()
-                                        == TelephonyManager.NETWORK_TYPE_NR)
-                                .map(PhysicalChannelConfig::getCellBandwidthDownlinkKhz)
-                                .mapToInt(Integer::intValue)
-                                .toArray();
+                        bandwidths = getBandwidthsFromLastPhysicalChannelConfigs();
                     }
                     if (anchorNrCellId == mLastAnchorNrCellId
                             && anchorNrCellId != PhysicalChannelConfig.PHYSICAL_CELL_ID_UNKNOWN) {
@@ -1716,9 +1730,10 @@ public class ServiceStateTracker extends Handler {
                         hasChanged |= RatRatcheter.updateBandwidths(bandwidths, mSS);
                     } else {
                         log("Do not ratchet bandwidths since anchor NR cell is different ("
-                                + mLastAnchorNrCellId + "->" + anchorNrCellId + ").");
+                                + mLastAnchorNrCellId + " -> " + anchorNrCellId
+                                + "). New bandwidths are " + Arrays.toString(bandwidths));
                         mLastAnchorNrCellId = anchorNrCellId;
-                        hasChanged = !Arrays.equals(mSS.getCellBandwidths(), bandwidths);
+                        hasChanged |= !Arrays.equals(mSS.getCellBandwidths(), bandwidths);
                         mSS.setCellBandwidths(bandwidths);
                     }
 
@@ -1800,8 +1815,12 @@ public class ServiceStateTracker extends Handler {
         return simAbsent;
     }
 
-    private static int[] getBandwidthsFromConfigs(List<PhysicalChannelConfig> list) {
-        return list.stream()
+    private int[] getBandwidthsFromLastPhysicalChannelConfigs() {
+        boolean includeLte = mCarrierConfig.getBoolean(
+                CarrierConfigManager.KEY_INCLUDE_LTE_FOR_NR_ADVANCED_THRESHOLD_BANDWIDTH_BOOL);
+        return mLastPhysicalChannelConfigList.stream()
+                .filter(config -> includeLte
+                        || config.getNetworkType() == TelephonyManager.NETWORK_TYPE_NR)
                 .map(PhysicalChannelConfig::getCellBandwidthDownlinkKhz)
                 .mapToInt(Integer::intValue)
                 .toArray();
@@ -2561,7 +2580,7 @@ public class ServiceStateTracker extends Handler {
             // Prioritize the PhysicalChannelConfig list because we might already be in carrier
             // aggregation by the time poll state is performed.
             if (primaryPcc != null) {
-                bandwidths = getBandwidthsFromConfigs(mLastPhysicalChannelConfigList);
+                bandwidths = getBandwidthsFromLastPhysicalChannelConfigs();
                 for (int bw : bandwidths) {
                     if (!isValidLteBandwidthKhz(bw)) {
                         loge("Invalid LTE Bandwidth in RegistrationState, " + bw);
@@ -2597,7 +2616,7 @@ public class ServiceStateTracker extends Handler {
             // Prioritize the PhysicalChannelConfig list because we might already be in carrier
             // aggregation by the time poll state is performed.
             if (primaryPcc != null) {
-                bandwidths = getBandwidthsFromConfigs(mLastPhysicalChannelConfigList);
+                bandwidths = getBandwidthsFromLastPhysicalChannelConfigs();
                 for (int bw : bandwidths) {
                     if (!isValidNrBandwidthKhz(bw)) {
                         loge("Invalid NR Bandwidth in RegistrationState, " + bw);
@@ -2708,10 +2727,9 @@ public class ServiceStateTracker extends Handler {
              */
             boolean roaming = (mGsmVoiceRoaming || mGsmDataRoaming) && mCarrierConfigLoaded;
 
-            // for IWLAN case, data is home. Only check voice roaming.
-            if (mNewSS.getRilDataRadioTechnology() == ServiceState.RIL_RADIO_TECHNOLOGY_IWLAN) {
-                roaming = mGsmVoiceRoaming;
-            }
+            log("updateRoamingState: roaming = " + roaming + ", mGsmVoiceRoaming = " +
+                    mGsmVoiceRoaming + ", mGsmDataRoaming = " +
+                    mGsmDataRoaming + ", mCarrierConfigLoaded = " + mCarrierConfigLoaded);
 
             if (roaming && !isOperatorConsideredRoaming(mNewSS)
                     && (isSameNamedOperators(mNewSS) || isOperatorConsideredNonRoaming(mNewSS))) {
@@ -2792,7 +2810,7 @@ public class ServiceStateTracker extends Handler {
 
     private void notifySpnDisplayUpdate(CarrierDisplayNameData data) {
         int subId = mPhone.getSubId();
-        // Update ACTION_SERVICE_PROVIDERS_UPDATED IFF any value changes
+        // Update ACTION_SERVICE_PROVIDERS_UPDATED if any value changes
         if (mSubId != subId
                 || data.shouldShowPlmn() != mCurShowPlmn
                 || data.shouldShowSpn() != mCurShowSpn
@@ -2836,8 +2854,6 @@ public class ServiceStateTracker extends Handler {
                 }
             }
         }
-
-        mSubId = subId;
         mCurShowSpn = data.shouldShowSpn();
         mCurShowPlmn = data.shouldShowPlmn();
         mCurSpn = data.getSpn();
