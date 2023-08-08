@@ -385,25 +385,6 @@ public class DataSettingsManager extends Handler {
             return isProvisioningDataEnabled();
         } else {
             boolean userDataEnabled = isUserDataEnabled();
-            int defaultDataSubId;
-            if (mPhone.isSubscriptionManagerServiceEnabled()) {
-                defaultDataSubId = SubscriptionManagerService.getInstance().getDefaultDataSubId();
-            } else {
-                defaultDataSubId = SubscriptionController.getInstance().getDefaultDataSubId();
-            }
-            // Check if data is enabled for default APN on nDDS SUB per data during call.
-            if (userDataEnabled && apnType == ApnSetting.TYPE_DEFAULT
-                    && mSubId != defaultDataSubId
-                    && mPhone.getState() != PhoneConstants.State.IDLE) {
-                final boolean isDataAllowedInVoiceCall = isMobileDataPolicyEnabled(TelephonyManager
-                    .MOBILE_DATA_POLICY_DATA_ON_NON_DEFAULT_DURING_VOICE_CALL);
-                log("isDataAllowedInVoiceCall = " + isDataAllowedInVoiceCall);
-                return (isDataAllowedInVoiceCall
-                        && mDataEnabledSettings.get(TelephonyManager.DATA_ENABLED_REASON_POLICY)
-                        && mDataEnabledSettings.get(TelephonyManager.DATA_ENABLED_REASON_CARRIER)
-                        && mDataEnabledSettings.get(TelephonyManager.DATA_ENABLED_REASON_THERMAL));
-            }
-
             // Check if we should temporarily enable data based on mobile data policy.
             boolean isDataEnabledOverridden = isDataEnabledOverriddenForApn(apnType);
 
@@ -772,30 +753,28 @@ public class DataSettingsManager extends Handler {
                     .getDefaultDataSubId();
         }
 
+        Phone defaultDataPhone;
+        if (mPhone.isSubscriptionManagerServiceEnabled()) {
+            defaultDataPhone = PhoneFactory.getPhone(SubscriptionManagerService.getInstance()
+                    .getPhoneId(SubscriptionManagerService.getInstance()
+                            .getDefaultDataSubId()));
+        } else {
+            defaultDataPhone = PhoneFactory.getPhone(SubscriptionController.getInstance()
+                    .getPhoneId(SubscriptionController.getInstance().getDefaultDataSubId()));
+        }
+        boolean isDdsUserEnabled = defaultDataPhone != null && defaultDataPhone.isUserDataEnabled();
+
         // mobile data policy : data during call
         if (isMobileDataPolicyEnabled(TelephonyManager
                 .MOBILE_DATA_POLICY_DATA_ON_NON_DEFAULT_DURING_VOICE_CALL)) {
-            overridden = overridden || isNonDds && mPhone.getState() != PhoneConstants.State.IDLE;
+            overridden |= isNonDds && isDdsUserEnabled
+                    && mPhone.getState() != PhoneConstants.State.IDLE;
         }
 
         // mobile data policy : auto data switch
         if (isMobileDataPolicyEnabled(TelephonyManager.MOBILE_DATA_POLICY_AUTO_DATA_SWITCH)) {
-            Phone defaultDataPhone;
-            if (mPhone.isSubscriptionManagerServiceEnabled()) {
-                // check user enabled data on the default data phone
-                defaultDataPhone = PhoneFactory.getPhone(SubscriptionManagerService.getInstance()
-                        .getPhoneId(SubscriptionManagerService.getInstance()
-                                .getDefaultDataSubId()));
-            } else {
-                // check user enabled data on the default data phone
-                defaultDataPhone = PhoneFactory.getPhone(SubscriptionController.getInstance()
-                        .getPhoneId(SubscriptionController.getInstance().getDefaultDataSubId()));
-            }
-            if (defaultDataPhone == null) {
-                loge("isDataEnabledOverriddenForApn: unexpected defaultDataPhone is null");
-            } else {
-                overridden = overridden || isNonDds && defaultDataPhone.isUserDataEnabled();
-            }
+            // check user enabled data on the default data phone
+            overridden |= isNonDds && isDdsUserEnabled;
         }
         return overridden;
     }
