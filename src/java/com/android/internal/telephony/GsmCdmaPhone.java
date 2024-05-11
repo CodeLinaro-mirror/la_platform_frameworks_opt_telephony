@@ -80,6 +80,7 @@ import android.telephony.BarringInfo;
 import android.telephony.CarrierConfigManager;
 import android.telephony.CellBroadcastIdRange;
 import android.telephony.CellIdentity;
+import android.telephony.emergency.EmergencyNumber;
 import android.telephony.ImsiEncryptionInfo;
 import android.telephony.LinkCapacityEstimate;
 import android.telephony.NetworkScanRequest;
@@ -136,6 +137,8 @@ import com.android.internal.telephony.uicc.UiccSlot;
 import com.android.internal.telephony.util.ArrayUtils;
 import com.android.telephony.Rlog;
 import com.android.internal.telephony.util.QtiImsUtils;
+
+import java.nio.charset.StandardCharsets;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
@@ -1385,6 +1388,12 @@ public class GsmCdmaPhone extends Phone {
         if (!isPhoneTypeGsm() && dialArgs.uusInfo != null) {
             throw new CallStateException("Sending UUS information NOT supported in CDMA!");
         }
+        if (dialArgs.uusInfo != null) {
+            String s = new String(dialArgs.uusInfo.getUserData(), StandardCharsets.UTF_8);
+            logd("ECall GsmCdmaPhone dialArgs.uusInfo not null and data is " + s);
+        } else {
+            logd("ECall GsmCdmaPhone dialArgs.uusInfo is null ");
+        }
         String possibleEmergencyNumber = checkForTestEmergencyNumber(dialString);
         // Record if the dialed number was swapped for a test emergency number.
         boolean isDialedNumberSwapped = !TextUtils.equals(dialString, possibleEmergencyNumber);
@@ -1471,6 +1480,11 @@ public class GsmCdmaPhone extends Phone {
                 }
             }
             extras.remove(PhoneConstants.EXTRA_COMPARE_DOMAIN);
+        }
+        if (dialArgs.eccCategory !=  EmergencyNumber.EMERGENCY_SERVICE_CATEGORY_UNSPECIFIED
+                    && dialArgs.uusInfo != null) {
+            logd("ECall GsmCdmaPhone dialArgs has emergency " + dialArgs.eccCategory);
+            useImsForEmergency = false;
         }
 
         // Only when the domain selection service is supported, EXTRA_DIAL_DOMAIN extra shall exist.
