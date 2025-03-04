@@ -33,7 +33,6 @@ import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
-import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 import android.platform.test.flag.junit.SetFlagsRule;
@@ -107,20 +106,18 @@ public class ApduSenderTest {
     private ResponseCaptor mResponseCaptor;
     private byte[] mSelectResponse;
     private ApduSender mSender;
-    private Context mContext;
 
     @Before
     public void setUp() {
         mSetFlagsRule.enableFlags(Flags.FLAG_OPTIMIZATION_APDU_SENDER);
 
-        mContext = InstrumentationRegistry.getContext();
         mMockCi = mock(CommandsInterface.class);
         mLooper = TestableLooper.get(this);
         mHandler = new Handler(mLooper.getLooper());
         mResponseCaptor = new ResponseCaptor();
         mSelectResponse = null;
 
-        mSender = new ApduSender(mContext, PHONE_ID,
+        mSender = new ApduSender(InstrumentationRegistry.getContext(), PHONE_ID,
                             mMockCi, ApduSender.ISD_R_AID, false /* supportExtendedApdu */);
     }
 
@@ -137,7 +134,7 @@ public class ApduSenderTest {
         mSelectResponse = null;
         mSender = null;
 
-        EuiccSession.get(mContext).endSession(SESSION_ID);
+        EuiccSession.get().endSession(SESSION_ID);
         clearSharedPreferences();
     }
 
@@ -461,7 +458,7 @@ public class ApduSenderTest {
         int channel = LogicalChannelMocker.mockOpenLogicalChannelResponse(mMockCi, "9000");
         LogicalChannelMocker.mockSendToLogicalChannel(mMockCi, channel, "A1A1A19000");
         LogicalChannelMocker.mockCloseLogicalChannel(mMockCi, channel, /* error= */ null);
-        EuiccSession.get(mContext).startSession(SESSION_ID);
+        EuiccSession.get().startSession(SESSION_ID);
 
         mSender.send((selectResponse, requestBuilder) -> requestBuilder.addApdu(
                 10, 1, 2, 3, 0, "a"), mResponseCaptor, mHandler);
@@ -472,7 +469,7 @@ public class ApduSenderTest {
         inOrder.verify(mMockCi).iccOpenLogicalChannel(eq(ApduSender.ISD_R_AID), anyInt(), any());
         inOrder.verify(mMockCi).iccTransmitApduLogicalChannel(eq(channel), eq(channel | 10),
                 eq(1), eq(2), eq(3), eq(0), eq("a"), anyBoolean(), any());
-        inOrder.verify(mMockCi).iccCloseLogicalChannel(eq(channel), eq(true /*isEs10*/), any());
+        // No iccCloseLogicalChannel
         inOrder.verifyNoMoreInteractions();
     }
 
@@ -483,7 +480,7 @@ public class ApduSenderTest {
         LogicalChannelMocker.mockSendToLogicalChannel(
                     mMockCi, channel, "A1A1A19000", "A1A1A19000");
         LogicalChannelMocker.mockCloseLogicalChannel(mMockCi, channel, /* error= */ null);
-        EuiccSession.get(mContext).startSession(SESSION_ID);
+        EuiccSession.get().startSession(SESSION_ID);
 
         mSender.send((selectResponse, requestBuilder) -> requestBuilder.addApdu(
                 10, 1, 2, 3, 0, "a"), mResponseCaptor, mHandler);
@@ -499,7 +496,7 @@ public class ApduSenderTest {
         // iccTransmitApduLogicalChannel twice
         inOrder.verify(mMockCi, times(2)).iccTransmitApduLogicalChannel(eq(channel),
                  eq(channel | 10), eq(1), eq(2), eq(3), eq(0), eq("a"), anyBoolean(), any());
-        inOrder.verify(mMockCi).iccCloseLogicalChannel(eq(channel), eq(true /*isEs10*/), any());
+        // No iccCloseLogicalChannel
         inOrder.verifyNoMoreInteractions();
     }
 
@@ -509,7 +506,7 @@ public class ApduSenderTest {
         LogicalChannelMocker.mockSendToLogicalChannel(mMockCi, channel,
                 "A1A1A19000", "A1A1A19000");
         LogicalChannelMocker.mockCloseLogicalChannel(mMockCi, channel, /* error= */ null);
-        EuiccSession.get(mContext).startSession(SESSION_ID);
+        EuiccSession.get().startSession(SESSION_ID);
 
         mSender.send((selectResponse, requestBuilder) -> requestBuilder.addApdu(
                 10, 1, 2, 3, 0, "a"), mResponseCaptor, mHandler);
@@ -517,7 +514,7 @@ public class ApduSenderTest {
         mSender.send((selectResponse, requestBuilder) -> requestBuilder.addApdu(
                 10, 1, 2, 3, 0, "a"), mResponseCaptor, mHandler);
         mLooper.processAllMessages();
-        EuiccSession.get(mContext).endSession(SESSION_ID);
+        EuiccSession.get().endSession(SESSION_ID);
         mLooper.processAllMessages();
 
         assertEquals("A1A1A1", IccUtils.bytesToHexString(mResponseCaptor.response));

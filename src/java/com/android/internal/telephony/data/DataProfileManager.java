@@ -37,6 +37,7 @@ import android.telephony.CarrierConfigManager;
 import android.telephony.NetworkRegistrationInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
+import android.telephony.TelephonyManager.SimState;
 import android.telephony.data.ApnSetting;
 import android.telephony.data.DataProfile;
 import android.telephony.data.TrafficDescriptor;
@@ -46,7 +47,6 @@ import android.util.IndentingPrintWriter;
 import android.util.LocalLog;
 import android.util.LruCache;
 
-import com.android.internal.telephony.IccCardConstants;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.data.DataConfigManager.DataConfigManagerCallback;
 import com.android.internal.telephony.data.DataNetworkController.DataNetworkControllerCallback;
@@ -120,6 +120,10 @@ public class DataProfileManager extends Handler {
     @NonNull
     private final Set<DataProfileManagerCallback> mDataProfileManagerCallbacks = new ArraySet<>();
 
+    /** SIM state. */
+    @SimState
+    private int mSimState = TelephonyManager.SIM_STATE_UNKNOWN;
+
     /** Feature flags controlling which feature is enabled. */
     @NonNull
     private final FeatureFlags mFeatureFlags;
@@ -181,6 +185,11 @@ public class DataProfileManager extends Handler {
                             @NonNull Set<DataNetwork> internetNetworks) {
                         if (internetNetworks.isEmpty()) return;
                         DataProfileManager.this.onInternetDataNetworkConnected(internetNetworks);
+                    }
+
+                    @Override
+                    public void onSimStateChanged(@SimState int simState) {
+                        DataProfileManager.this.mSimState = simState;
                     }
                 });
         mDataConfigManager.registerCallback(new DataConfigManagerCallback(this::post) {
@@ -306,7 +315,7 @@ public class DataProfileManager extends Handler {
 
         DataProfile dataProfile;
 
-        if (IccCardConstants.State.LOADED.equals(mPhone.getIccCard().getState())) {
+        if (mSimState == TelephonyManager.SIM_STATE_LOADED) {
             // Check if any of the profile already supports IMS, if not, add the default one.
             dataProfile = profiles.stream()
                     .filter(dp -> dp.canSatisfy(NetworkCapabilities.NET_CAPABILITY_IMS))

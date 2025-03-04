@@ -1656,6 +1656,7 @@ public class EuiccControllerTest extends TelephonyTest {
                 vendorApiLevel);
 
         // Feature flag enabled, device has required telephony feature.
+        doReturn(true).when(mFeatureFlags).enforceTelephonyFeatureMappingForPublicApis();
         doReturn(true).when(mPackageManager).hasSystemFeature(
                 eq(PackageManager.FEATURE_TELEPHONY_EUICC));
 

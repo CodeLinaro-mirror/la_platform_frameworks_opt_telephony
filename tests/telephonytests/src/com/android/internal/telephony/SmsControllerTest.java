@@ -219,7 +219,6 @@ public class SmsControllerTest extends TelephonyTest {
     }
 
     @Test
-    @EnableCompatChanges({TelephonyManager.ENABLE_FEATURE_MAPPING})
     public void sendsendTextForSubscriberTest() {
         int subId = 1;
         doReturn(true).when(mSubscriptionManager)
@@ -233,7 +232,6 @@ public class SmsControllerTest extends TelephonyTest {
     }
 
     @Test
-    @EnableCompatChanges({TelephonyManager.ENABLE_FEATURE_MAPPING})
     public void sendTextForSubscriberTest_InteractAcrossUsers() {
         int subId = 1;
         // Sending text to subscriber should not fail when the caller has the
@@ -315,6 +313,7 @@ public class SmsControllerTest extends TelephonyTest {
         replaceInstance(SmsController.class, "mVendorApiLevel", mSmsControllerUT, vendorApiLevel);
 
         // Feature enabled, device does not have required telephony feature.
+        doReturn(true).when(mFeatureFlags).enforceTelephonyFeatureMappingForPublicApis();
         doReturn(false).when(mPackageManager).hasSystemFeature(
                 PackageManager.FEATURE_TELEPHONY_MESSAGING);
 

@@ -16,7 +16,6 @@
 package com.android.internal.telephony.euicc;
 
 import android.annotation.Nullable;
-import android.content.Context;
 import android.util.ArraySet;
 
 import com.android.internal.annotations.GuardedBy;
@@ -42,9 +41,9 @@ public class EuiccSession {
     @GuardedBy("EuiccSession.class")
     private static EuiccSession sInstance;
 
-    public static synchronized EuiccSession get(Context context) {
+    public static synchronized EuiccSession get() {
         if (sInstance == null) {
-            sInstance = new EuiccSession(context);
+            sInstance = new EuiccSession();
         }
         return sInstance;
     }
@@ -54,18 +53,6 @@ public class EuiccSession {
 
     @GuardedBy("this")
     private final Set<ApduSender> mApduSenders = new ArraySet<>();
-    private final Context mContext;
-
-    /**
-     * Returns true if the ApduSender optimization is enabled i.e. a logical channel is opened
-     * and kept open for multiple APDU commands within one session.
-     *
-     * This is gated by both an aconfig flag and a device-specific flag.
-     */
-    private boolean optimizeApduSender() {
-        return Flags.optimizationApduSender() && mContext.getResources().getBoolean(
-                com.android.internal.R.bool.euicc_optimize_apdu_sender);
-    }
 
     /**
      * Marks the start of a eUICC transaction session.
@@ -85,7 +72,7 @@ public class EuiccSession {
      * @param sessionId The session ID.
      */
     public void startSession(String sessionId) {
-        if (!optimizeApduSender()) {
+        if (!Flags.optimizationApduSender()) {
             // Other methods in this class is no-op if no session started.
             // Do not add flag to other methods, so if the flag gets turned off,
             // the session can be ended properly.
@@ -192,7 +179,5 @@ public class EuiccSession {
     }
 
     @VisibleForTesting
-    public EuiccSession(Context context) {
-        mContext = context;
-    }
+    public EuiccSession() {}
 }

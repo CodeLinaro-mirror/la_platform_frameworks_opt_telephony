@@ -119,6 +119,7 @@ public class PhoneSubInfoControllerTest extends TelephonyTest {
 
         // In order not to affect the existing implementation, define a telephony features
         // and disabled enforce_telephony_feature_mapping_for_public_apis feature flag
+        doReturn(false).when(mFeatureFlags).enforceTelephonyFeatureMappingForPublicApis();
         doReturn(true).when(mPm).hasSystemFeature(anyString());
         doReturn(new String[] {TAG}).when(mPm).getPackagesForUid(anyInt());
     }
@@ -217,14 +218,27 @@ public class PhoneSubInfoControllerTest extends TelephonyTest {
 
     @Test
     @SmallTest
+    public void testGetNai() {
+        doReturn("aaa@example.com").when(mPhone).getNai();
+        assertEquals("aaa@example.com",
+                mPhoneSubInfoControllerUT.getNaiForSubscriber(0, TAG, FEATURE_ID));
+
+        doReturn("bbb@example.com").when(mSecondPhone).getNai();
+        assertEquals("bbb@example.com",
+                mPhoneSubInfoControllerUT.getNaiForSubscriber(1, TAG, FEATURE_ID));
+    }
+
+    @Test
+    @SmallTest
     @EnableCompatChanges({TelephonyManager.ENABLE_FEATURE_MAPPING})
-    public void testGetNai() throws Exception {
+    public void testGetNai_EnabledEnforceTelephonyFeatureMappingForPublicApis() throws Exception {
         // Replace field to set SDK version of vendor partition to Android V
         int vendorApiLevel = Build.VERSION_CODES.VANILLA_ICE_CREAM;
         replaceInstance(PhoneSubInfoController.class, "mVendorApiLevel",
                 mPhoneSubInfoControllerUT, vendorApiLevel);
 
         // FeatureFlags enabled, System has required feature
+        doReturn(true).when(mFeatureFlags).enforceTelephonyFeatureMappingForPublicApis();
         doReturn(true).when(mPm).hasSystemFeature(
                 eq(PackageManager.FEATURE_TELEPHONY_SUBSCRIPTION));
         doReturn("bbb@example.com").when(mSecondPhone).getNai();
@@ -451,7 +465,7 @@ public class PhoneSubInfoControllerTest extends TelephonyTest {
     }
 
     @Test
-    @EnableCompatChanges({TelephonyManager.ENABLE_FEATURE_MAPPING})
+    @SmallTest
     public void testGetSubscriberId() {
         //IMSI
         doReturn("310260426283121").when(mPhone).getSubscriberId();
@@ -464,7 +478,7 @@ public class PhoneSubInfoControllerTest extends TelephonyTest {
     }
 
     @Test
-    @EnableCompatChanges({TelephonyManager.ENABLE_FEATURE_MAPPING})
+    @SmallTest
     public void testGetSubscriberIdWithInactiveSubId() {
         //IMSI
         assertNull(mPhoneSubInfoControllerUT.getSubscriberIdForSubscriber(2, TAG, FEATURE_ID));
@@ -543,7 +557,7 @@ public class PhoneSubInfoControllerTest extends TelephonyTest {
     }
 
     @Test
-    @EnableCompatChanges({TelephonyManager.ENABLE_FEATURE_MAPPING})
+    @SmallTest
     public void testGetIccSerialNumber() {
         //IccId
         doReturn("8991101200003204510").when(mPhone).getIccSerialNumber();
@@ -627,7 +641,7 @@ public class PhoneSubInfoControllerTest extends TelephonyTest {
     }
 
     @Test
-    @EnableCompatChanges({TelephonyManager.ENABLE_FEATURE_MAPPING})
+    @SmallTest
     public void testGetLine1Number() {
         mApplicationInfo.targetSdkVersion = Build.VERSION_CODES.R;
         doReturn("+18051234567").when(mPhone).getLine1Number();
@@ -640,7 +654,7 @@ public class PhoneSubInfoControllerTest extends TelephonyTest {
     }
 
     @Test
-    @EnableCompatChanges({TelephonyManager.ENABLE_FEATURE_MAPPING})
+    @SmallTest
     public void testGetLine1NumberWithOutPermissionTargetPreR() {
         mApplicationInfo.targetSdkVersion = Build.VERSION_CODES.Q;
         doReturn("+18051234567").when(mPhone).getLine1Number();
@@ -681,7 +695,7 @@ public class PhoneSubInfoControllerTest extends TelephonyTest {
     }
 
     @Test
-    @EnableCompatChanges({TelephonyManager.ENABLE_FEATURE_MAPPING})
+    @SmallTest
     public void testGetLine1NumberWithOutPermissionTargetR() {
         mApplicationInfo.targetSdkVersion = Build.VERSION_CODES.R;
         doReturn("+18051234567").when(mPhone).getLine1Number();
@@ -862,7 +876,7 @@ public class PhoneSubInfoControllerTest extends TelephonyTest {
     }
 
     @Test
-    @EnableCompatChanges({TelephonyManager.ENABLE_FEATURE_MAPPING})
+    @SmallTest
     public void testGetVoiceMailNumber() {
         doReturn("+18051234567").when(mPhone).getVoiceMailNumber();
         assertEquals("+18051234567", mPhoneSubInfoControllerUT
@@ -874,7 +888,7 @@ public class PhoneSubInfoControllerTest extends TelephonyTest {
     }
 
     @Test
-    @EnableCompatChanges({TelephonyManager.ENABLE_FEATURE_MAPPING})
+    @SmallTest
     public void testGetVoiceMailNumberWithOutPermission() {
         doReturn("+18051234567").when(mPhone).getVoiceMailNumber();
         doReturn("+18052345678").when(mSecondPhone).getVoiceMailNumber();
@@ -918,7 +932,7 @@ public class PhoneSubInfoControllerTest extends TelephonyTest {
     }
 
     @Test
-    @EnableCompatChanges({TelephonyManager.ENABLE_FEATURE_MAPPING})
+    @SmallTest
     public void testGetVoiceMailAlphaTag() {
         doReturn("VM_SIM_0").when(mPhone).getVoiceMailAlphaTag();
         assertEquals("VM_SIM_0", mPhoneSubInfoControllerUT
@@ -930,7 +944,7 @@ public class PhoneSubInfoControllerTest extends TelephonyTest {
     }
 
     @Test
-    @EnableCompatChanges({TelephonyManager.ENABLE_FEATURE_MAPPING})
+    @SmallTest
     public void testGetVoiceMailAlphaTagWithOutPermission() {
         doReturn("VM_SIM_0").when(mPhone).getVoiceMailAlphaTag();
         doReturn("VM_SIM_1").when(mSecondPhone).getVoiceMailAlphaTag();
@@ -998,7 +1012,6 @@ public class PhoneSubInfoControllerTest extends TelephonyTest {
     }
 
     @Test
-    @EnableCompatChanges({TelephonyManager.ENABLE_FEATURE_MAPPING})
     public void testGetSmscIdentityForTelUri() {
         try {
             setUpInitials();
@@ -1016,7 +1029,6 @@ public class PhoneSubInfoControllerTest extends TelephonyTest {
     }
 
     @Test
-    @EnableCompatChanges({TelephonyManager.ENABLE_FEATURE_MAPPING})
     public void testGetSmscIdentityForSipUri() {
         try {
             UiccPort uiccPort1 = Mockito.mock(UiccPort.class);
@@ -1055,7 +1067,6 @@ public class PhoneSubInfoControllerTest extends TelephonyTest {
     }
 
     @Test
-    @EnableCompatChanges({TelephonyManager.ENABLE_FEATURE_MAPPING})
     public void testGetSmscIdentityWithOutPermissions() {
         setUpInitials();
 
@@ -1114,7 +1125,6 @@ public class PhoneSubInfoControllerTest extends TelephonyTest {
     }
 
     @Test
-    @EnableCompatChanges({TelephonyManager.ENABLE_FEATURE_MAPPING})
     public void testGetSimServiceTable() throws RemoteException {
         String refSst = "1234567";
         doReturn(mUiccPort).when(mPhone).getUiccPort();
@@ -1129,7 +1139,6 @@ public class PhoneSubInfoControllerTest extends TelephonyTest {
     }
 
     @Test
-    @EnableCompatChanges({TelephonyManager.ENABLE_FEATURE_MAPPING})
     public void testGetSimServiceTableEmpty() throws RemoteException {
         String refSst = null;
         doReturn(mUiccPort).when(mPhone).getUiccPort();
@@ -1144,7 +1153,6 @@ public class PhoneSubInfoControllerTest extends TelephonyTest {
     }
 
     @Test
-    @EnableCompatChanges({TelephonyManager.ENABLE_FEATURE_MAPPING})
     public void testGetSstWhenNoUiccPort() throws RemoteException {
         String refSst = "1234567";
         doReturn(null).when(mPhone).getUiccPort();
@@ -1159,7 +1167,6 @@ public class PhoneSubInfoControllerTest extends TelephonyTest {
     }
 
     @Test
-    @EnableCompatChanges({TelephonyManager.ENABLE_FEATURE_MAPPING})
     public void testGetSstWhenNoUiccProfile() throws RemoteException {
         String refSst = "1234567";
         doReturn(mUiccPort).when(mPhone).getUiccPort();
@@ -1174,7 +1181,6 @@ public class PhoneSubInfoControllerTest extends TelephonyTest {
     }
 
     @Test
-    @EnableCompatChanges({TelephonyManager.ENABLE_FEATURE_MAPPING})
     public void testGetSstWhenNoUiccApplication() throws RemoteException {
         String refSst = "1234567";
         doReturn(mUiccPort).when(mPhone).getUiccPort();
@@ -1189,7 +1195,6 @@ public class PhoneSubInfoControllerTest extends TelephonyTest {
     }
 
     @Test
-    @EnableCompatChanges({TelephonyManager.ENABLE_FEATURE_MAPPING})
     public void testGetSimServiceTableWithOutPermissions() throws RemoteException {
         String refSst = "1234567";
         doReturn(mUiccPort).when(mPhone).getUiccPort();
@@ -1257,7 +1262,6 @@ public class PhoneSubInfoControllerTest extends TelephonyTest {
     }
 
     @Test
-    @EnableCompatChanges({TelephonyManager.ENABLE_FEATURE_MAPPING})
     public void getImsPublicUserIdentities() {
         String[] refImpuArray = new String[3];
         refImpuArray[0] = "012345678";
@@ -1276,7 +1280,6 @@ public class PhoneSubInfoControllerTest extends TelephonyTest {
     }
 
     @Test
-    @EnableCompatChanges({TelephonyManager.ENABLE_FEATURE_MAPPING})
     public void getImsPublicUserIdentities_InvalidImpu() {
         String[] refImpuArray = new String[3];
         refImpuArray[0] = null;
@@ -1291,11 +1294,8 @@ public class PhoneSubInfoControllerTest extends TelephonyTest {
     }
 
     @Test
-    @EnableCompatChanges({TelephonyManager.ENABLE_FEATURE_MAPPING})
     public void getImsPublicUserIdentities_IsimNotLoadedError() {
         doReturn(null).when(mPhone).getIsimRecords();
-        doReturn(true).when(mPackageManager).hasSystemFeature(
-                eq(PackageManager.FEATURE_TELEPHONY_SUBSCRIPTION));
 
         try {
             mPhoneSubInfoControllerUT.getImsPublicUserIdentities(0, TAG);
@@ -1333,7 +1333,6 @@ public class PhoneSubInfoControllerTest extends TelephonyTest {
     }
 
     @Test
-    @EnableCompatChanges({TelephonyManager.ENABLE_FEATURE_MAPPING})
     public void getImsPcscfAddresses() {
         String[] preDefinedPcscfs = new String[3];
         preDefinedPcscfs[0] = "127.0.0.1";
@@ -1353,7 +1352,6 @@ public class PhoneSubInfoControllerTest extends TelephonyTest {
     }
 
     @Test
-    @EnableCompatChanges({TelephonyManager.ENABLE_FEATURE_MAPPING})
     public void getImsPcscfAddresses_InvalidPcscf() {
         String[] preDefinedPcscfs = new String[3];
         preDefinedPcscfs[0] = null;
@@ -1371,7 +1369,6 @@ public class PhoneSubInfoControllerTest extends TelephonyTest {
     }
 
     @Test
-    @EnableCompatChanges({TelephonyManager.ENABLE_FEATURE_MAPPING})
     public void getImsPcscfAddresses_IsimNotLoadedError() {
         doReturn(true).when(mFeatureFlags).supportIsimRecord();
         doReturn(null).when(mPhone).getIsimRecords();

@@ -40,7 +40,6 @@ import android.os.UserHandle;
 import android.service.carrier.CarrierService;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
-import android.telephony.TelephonyRegistryManager;
 import android.text.TextUtils;
 import android.util.LocalLog;
 import android.util.Log;
@@ -336,7 +335,7 @@ public class CarrierServiceBindHelper {
             bindCount++;
             lastBindStartMillis = System.currentTimeMillis();
 
-            connection = new CarrierServiceConnection(getPhoneId());
+            connection = new CarrierServiceConnection();
 
             String error;
             try {
@@ -432,11 +431,6 @@ public class CarrierServiceBindHelper {
 
     private class CarrierServiceConnection implements ServiceConnection {
         private boolean connected;
-        private final int mPhoneId;
-
-        CarrierServiceConnection(int phoneId) {
-            mPhoneId = phoneId;
-        }
 
         @Override
         public void onServiceConnected(ComponentName name, IBinder service) {
@@ -444,38 +438,16 @@ public class CarrierServiceBindHelper {
             connected = true;
         }
 
-        private void maybeDisableCarrierNetworkChangeNotification() {
-            int subscriptionId = SubscriptionManager.getSubscriptionId(mPhoneId);
-            // TODO(b/117525047): switch to phoneId-based solution when available in
-            // TelephonyRegistryManager to address SIM remove/disable case.
-            if (subscriptionId == SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
-                logdWithLocalLog(
-                        "No valid subscription found when trying to disable carrierNetworkChange"
-                                + " for phoneId: "
-                                + mPhoneId);
-                return;
-            }
-            TelephonyRegistryManager telephonyRegistryManager =
-                    mContext.getSystemService(TelephonyRegistryManager.class);
-            telephonyRegistryManager.notifyCarrierNetworkChange(subscriptionId, false);
-        }
-
         @Override
         public void onServiceDisconnected(ComponentName name) {
             logdWithLocalLog("Disconnected from carrier app: " + name.flattenToString());
             connected = false;
-            if (Flags.disableCarrierNetworkChangeOnCarrierAppLost()) {
-                maybeDisableCarrierNetworkChangeNotification();
-            }
         }
 
         @Override
         public void onBindingDied(ComponentName name) {
             logdWithLocalLog("Binding from carrier app died: " + name.flattenToString());
             connected = false;
-            if (Flags.disableCarrierNetworkChangeOnCarrierAppLost()) {
-                maybeDisableCarrierNetworkChangeNotification();
-            }
         }
 
         @Override

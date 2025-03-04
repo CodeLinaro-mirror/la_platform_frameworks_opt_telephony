@@ -35,9 +35,6 @@ public class EntitlementMetricsStats {
     private int mResult;
     private int mEntitlementStatus;
     private boolean mIsRetry;
-    private boolean mIsAllowedServiceEntitlement;
-    private int[] mEntitlementServiceType;
-    private int mEntitlementDataPolicy;
 
     private EntitlementMetricsStats() {}
 
@@ -59,14 +56,11 @@ public class EntitlementMetricsStats {
     /** Report metrics on entitlement query request success */
     public void reportSuccess(int subId,
             @SatelliteConstants.SatelliteEntitlementStatus int entitlementStatus,
-            boolean isRetry, boolean isAllowedServiceInfo, int[] serviceType, int dataPolicy) {
+            boolean isRetry) {
         mSubId = subId;
         mResult = RESULT_SUCCESS;
         mEntitlementStatus = entitlementStatus;
         mIsRetry = isRetry;
-        mIsAllowedServiceEntitlement = isAllowedServiceInfo;
-        mEntitlementServiceType = serviceType;
-        mEntitlementDataPolicy = dataPolicy;
         reportEntitlementMetrics();
     }
 
@@ -76,9 +70,6 @@ public class EntitlementMetricsStats {
         mResult = result;
         mIsRetry = isRetry;
         mEntitlementStatus = SatelliteConstants.SATELLITE_ENTITLEMENT_STATUS_UNKNOWN;
-        mIsAllowedServiceEntitlement = false;
-        mEntitlementServiceType = new int[0];
-        mEntitlementDataPolicy = SatelliteConstants.SATELLITE_ENTITLEMENT_SERVICE_POLICY_UNKNOWN;
         reportEntitlementMetrics();
     }
 
@@ -91,9 +82,6 @@ public class EntitlementMetricsStats {
                         .setEntitlementStatus(mEntitlementStatus)
                         .setIsRetry(mIsRetry)
                         .setCount(1)
-                        .setIsAllowedServiceEntitlement(mIsAllowedServiceEntitlement)
-                        .setEntitlementServiceType(mEntitlementServiceType)
-                        .setEntitlementDataPolicy(mEntitlementDataPolicy)
                         .build();
         SatelliteStats.getInstance().onSatelliteEntitlementMetrics(entitlementParams);
         logd("reportEntitlementMetrics: " + entitlementParams);
