@@ -365,6 +365,7 @@ public class SatelliteController extends Handler {
     private boolean mDisableNFCOnSatelliteEnabled = false;
     private boolean mDisableUWBOnSatelliteEnabled = false;
     private boolean mDisableWifiOnSatelliteEnabled = false;
+    private AtomicBoolean mIgnorePlmnListFromStorage = new AtomicBoolean(false);
 
     private final Object mSatelliteEnabledRequestLock = new Object();
     /* This variable is used to store the first enable request that framework has received in the
@@ -1307,7 +1308,8 @@ public class SatelliteController extends Handler {
         }
     }
 
-    private static final class SatelliteControllerHandlerRequest {
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    public static final class SatelliteControllerHandlerRequest {
         /** The argument to use for the request */
         public @NonNull Object argument;
         /** The caller needs to specify the phone to be used for the request */
@@ -1315,7 +1317,7 @@ public class SatelliteController extends Handler {
         /** The result of the request that is run on the main thread */
         public @Nullable Object result;
 
-        SatelliteControllerHandlerRequest(Object argument, Phone phone) {
+        public SatelliteControllerHandlerRequest(Object argument, Phone phone) {
             this.argument = argument;
             this.phone = phone;
         }
@@ -2302,7 +2304,7 @@ public class SatelliteController extends Handler {
                     int subId = (int) ar.userObj;
                     int error = SatelliteServiceUtils.getSatelliteError(
                             ar, "isSatelliteEnabledForCarrier");
-                    boolean satelliteEnabled = (boolean) ar.result;
+                    boolean satelliteEnabled = (Boolean) ar.result;
                     plogd("EVENT_GET_SATELLITE_ENABLED_FOR_CARRIER_DONE: subId=" + subId
                             + " error=" + error + " satelliteEnabled=" + satelliteEnabled);
 
@@ -5420,7 +5422,8 @@ public class SatelliteController extends Handler {
                 obtainMessage(EVENT_SET_SATELLITE_PLMN_INFO_DONE));
     }
 
-    private Set<String> getAllPlmnSet() {
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
+    protected Set<String> getAllPlmnSet() {
         Set<String> allPlmnSetFromSubInfo = new HashSet<>();
         int[] activeSubIdArray = mSubscriptionManagerService.getActiveSubIdList(true);
         for (int activeSubId : activeSubIdArray) {
@@ -5428,6 +5431,12 @@ public class SatelliteController extends Handler {
             allPlmnSetFromSubInfo.addAll(getBarredPlmnList(activeSubId));
         }
         allPlmnSetFromSubInfo.addAll(mSatellitePlmnListFromOverlayConfig);
+
+        if (mIgnorePlmnListFromStorage.get()) {
+            // Do not use PLMN list from storage
+            plogd("getAllPlmnList: allPlmnSetFromSubInfo=" + allPlmnSetFromSubInfo);
+            return allPlmnSetFromSubInfo;
+        }
 
         Set<String> allPlmnListFromStorage = getCarrierRoamingNtnAllSatellitePlmnSetFromStorage();
         if (!allPlmnListFromStorage.containsAll(allPlmnSetFromSubInfo)) {
@@ -6129,7 +6138,8 @@ public class SatelliteController extends Handler {
      * @param subId subscription ID
      * @return {@code true} if satellite modem is enabled, {@code false} otherwise.
      */
-    private boolean isSatelliteEnabledForCarrierAtModem(int subId) {
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    public boolean isSatelliteEnabledForCarrierAtModem(int subId) {
         synchronized (mIsSatelliteEnabledLock) {
             return mIsSatelliteAttachEnabledForCarrierArrayPerSub.getOrDefault(subId, false);
         }
@@ -7925,12 +7935,35 @@ public class SatelliteController extends Handler {
         }
 
         if(carrierTagIds == null) {
-            plogd("isSatelliteAvailableAtCurrentLocation: tagids for carrier satellite enabled " +
-                    "are not available");
-            return false;
+            String satelliteAccessConfigFile =
+                getSatelliteAccessConfigurationFileFromOverlayConfig();
+            if (TextUtils.isEmpty(satelliteAccessConfigFile)) {
+                plogd("isSatelliteAvailableAtCurrentLocation: device does not support"
+                          + " custom satellite access configuration per location");
+                return true;
+            } else {
+                plogd("isSatelliteAvailableAtCurrentLocation: tagids for carrier "
+                          + info.getCarrierName() + ", subId=" + info.getSubscriptionId()
+                          + " are not available");
+                return false;
+            }
         }
 
         return isCarrierSatelliteAvailableAtCurrentLocation(carrierTagIds);
+    }
+
+    @Nullable
+    private String getSatelliteAccessConfigurationFileFromOverlayConfig() {
+        String satelliteAccessConfigFile = null;
+        try {
+            satelliteAccessConfigFile = mContext.getResources().getString(
+                    com.android.internal.R.string.satellite_access_config_file);
+        } catch (Resources.NotFoundException ex) {
+            loge("getSatelliteAccessConfigurationFileFromOverlayConfig: got ex=" + ex);
+        }
+
+        logd("satelliteAccessConfigFile =" + satelliteAccessConfigFile);
+        return satelliteAccessConfigFile;
     }
 
     /**
@@ -9296,5 +9329,18 @@ public class SatelliteController extends Handler {
         }
 
         return getSatelliteDataServicePolicyForPlmn(subId, "");
+    }
+
+    /**
+     * This API can be used by only CTS to make the function {@link #getAllPlmnSet()} to exclude the
+     * PLMN list from storage from the returned result.
+     *
+     * @param enabled Whether to enable boolean config.
+     * @return {@code true} if the value is set successfully, {@code false} otherwise.
+     */
+    public boolean setSatelliteIgnorePlmnListFromStorage(boolean enabled) {
+        plogd("setSatelliteIgnorePlmnListFromStorage - " + enabled);
+        mIgnorePlmnListFromStorage.set(enabled);
+        return true;
     }
 }
