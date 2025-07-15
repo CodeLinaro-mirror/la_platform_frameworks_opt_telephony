@@ -1,3 +1,10 @@
+! CAUTION !
+
+This repository has been archived. The code is outdated and no longer maintained.
+---------------------------------------------------------------------------------
+
+
+
 This package contains classes used to manage a DataConnection.
 
 A criticial aspect of this class is that most objects in this
