@@ -5144,7 +5144,7 @@ public class SubscriptionManagerService extends ISub.Stub {
         for (SubscriptionInfo oppSubInfo : getOpportunisticSubscriptions(
                 mContext.getOpPackageName(), mContext.getFeatureId())) {
             boolean groupDisabled;
-            if (mFeatureFlags.preventDisablingUngroupedOppSub()) {
+            if (mFeatureFlags.enableIsPrivateNetworkApi()) {
                 groupDisabled = oppSubInfo.getGroupUuid() != null
                         && activeSubscriptions.stream().noneMatch(subInfo ->
                         !subInfo.isOpportunistic() && Objects.equals(oppSubInfo.getGroupUuid(),
@@ -6193,6 +6193,22 @@ public class SubscriptionManagerService extends ISub.Stub {
         }
 
         return TextUtils.equals(spn, overlaySpn);
+    }
+
+    @Override
+    @EnforcePermission(Manifest.permission.CONTROL_SIM_AUTO_PIN_MANAGEMENT)
+    public byte[] getAllPlatformManagedPinsForBackup() {
+        getAllPlatformManagedPinsForBackup_enforcePermission();
+
+        return mUiccController.getPinStorage().getPlatformManagedPinsForBackup();
+    }
+
+    @Override
+    @EnforcePermission(Manifest.permission.CONTROL_SIM_AUTO_PIN_MANAGEMENT)
+    public void restorePlatformManagedSimPins(byte[] data) {
+        restorePlatformManagedSimPins_enforcePermission();
+
+        mUiccController.getPinStorage().restorePlatformManagedPinsFromBackup(data);
     }
 
     private boolean isMockModemAllowed() {

@@ -1844,7 +1844,7 @@ public class DataNetwork extends StateMachine {
                 mDataNetworkCallback.invokeFromExecutor(
                         () -> mDataNetworkCallback.onConnected(DataNetwork.this));
 
-                mQosCallbackTracker = new QosCallbackTracker(mNetworkAgent, mPhone, mFlags);
+                mQosCallbackTracker = new QosCallbackTracker(mNetworkAgent, mPhone);
                 mQosCallbackTracker.updateSessions(mQosBearerSessions);
                 mKeepaliveTracker = new KeepaliveTracker(mPhone,
                         getHandler().getLooper(), DataNetwork.this, mNetworkAgent);
@@ -2552,7 +2552,7 @@ public class DataNetwork extends StateMachine {
         // Extract network capabilities from the traffic descriptor.
         if (mFlags.enableTrafficDescriptorConnectionCapability()) {
             for (TrafficDescriptor trafficDescriptor : mTrafficDescriptors) {
-                int netCap = DataUtils.connectionCapabilityToNetworkCapability(
+                int netCap = mDataConfigManager.connectionCapabilityToNetworkCapability(
                         trafficDescriptor.getConnectionCapability());
                 if (netCap != -1) {
                     builder.addCapability(netCap);
@@ -2729,13 +2729,9 @@ public class DataNetwork extends StateMachine {
                 NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)) {
 
             int dataPolicy;
-            if (mFlags.dataServiceCheck()) {
-                final SatelliteController satelliteController = SatelliteController.getInstance();
-                dataPolicy = satelliteController.getSatelliteDataServicePolicyForPlmn(mSubId,
-                        mPhone.getServiceState().getOperatorNumeric());
-            } else {
-                dataPolicy = mDataConfigManager.getSatelliteDataSupportMode();
-            }
+            final SatelliteController satelliteController = SatelliteController.getInstance();
+            dataPolicy = satelliteController.getSatelliteDataServicePolicyForPlmn(mSubId,
+                    mPhone.getServiceState().getOperatorNumeric());
             switch (dataPolicy) {
                 case CarrierConfigManager.SATELLITE_DATA_SUPPORT_ONLY_RESTRICTED
                         -> builder.removeCapability(

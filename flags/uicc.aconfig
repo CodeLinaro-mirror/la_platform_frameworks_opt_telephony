@@ -19,6 +19,7 @@ flag {
     bug:"318348580"
 }
 
+# Due to an external dependency, the flag is not being cleaned up here, even though it has been cleaned up in the framework.
 # OWNER=arunvoddu TARGET=24Q4
 flag {
     name: "set_carrier_restriction_status"
@@ -26,14 +27,6 @@ flag {
     description: "This flag controls the visibility of the setCarrierRestrictionStatus API in carrierRestrictionRules class."
     bug:"342411308"
     is_exported: true
-}
-
-# OWNER=mewan TARGET=24Q4
-flag {
-    name: "optimization_apdu_sender"
-    namespace: "telephony"
-    description: "This flag controls optimization of apdu sender class."
-    bug:"335257880"
 }
 
 # OWNER=jhyoon TARGET=25Q2
@@ -115,4 +108,23 @@ flag {
     namespace: "telephony"
     description: "Add new permission to secure SIM auth"
     bug:"343796688"
+}
+
+# OWNER=jayachandranc TARGET=26Q2
+flag {
+    name: "cache_adn_record_loader_exceptions"
+    namespace: "telephony"
+    description: "Cache AdnRecordLoader exceptions to prevent infinite retry loops"
+    bug:"477430965"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+# OWNER=nharold TARGET=26Q3
+flag {
+    name: "downloadable_subscription_include_carrier_identifier_internal"
+    namespace: "telephony"
+    description: "Add the CarrierIdentifier to the DownloadableSubscription"
+    bug:"477378293"
 }
