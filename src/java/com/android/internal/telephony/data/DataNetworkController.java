@@ -16,8 +16,10 @@
 
 // QTI_BEGIN: 2025-02-25: Telephony: Fix license marking
 /*
+// QTI_END: 2025-02-25: Telephony: Fix license marking
  * Changes from Qualcomm Technologies, Inc. are provided under the following license:
  * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// QTI_BEGIN: 2025-02-25: Telephony: Fix license marking
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
