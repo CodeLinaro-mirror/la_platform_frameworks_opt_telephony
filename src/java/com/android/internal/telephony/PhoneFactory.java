@@ -101,7 +101,7 @@ public class PhoneFactory {
     static private NotificationChannelController sNotificationChannelController;
     static private CellularNetworkValidator sCellularNetworkValidator;
 
-    static private final HashMap<String, LocalLog>sLocalLogs = new HashMap<String, LocalLog>();
+    static private HashMap<String, LocalLog>sLocalLogs = new HashMap<String, LocalLog>();
     private static MetricsCollector sMetricsCollector;
     private static RadioInterfaceCapabilityController sRadioHalCapabilities;
     private static @NonNull FeatureFlags sFeatureFlags = new FeatureFlagsImpl();
@@ -225,11 +225,9 @@ public class PhoneFactory {
                 }
                 Rlog.i(LOG_TAG, "defaultSmsApplication: " + packageName);
 
-                if (sFeatureFlags.smsMmsDeliverBroadcastsRedirectToMainUser()) {
-                    // Explicitly call this, even if the user has no default Sms application, to
-                    // ensure that the System apps have the appropriate permissions.
-                    SmsApplication.grantPermissionsToSystemApps(context);
-                }
+                // Explicitly call this, even if the user has no default Sms application, to
+                // ensure that the System apps have the appropriate permissions.
+                SmsApplication.grantPermissionsToSystemApps(context);
 
                 // Set up monitor to watch for changes to SMS packages
                 SmsApplication.initSmsPackageMonitor(context);

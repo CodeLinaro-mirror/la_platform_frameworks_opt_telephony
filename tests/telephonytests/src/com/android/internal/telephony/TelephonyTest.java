@@ -111,6 +111,7 @@ import com.android.internal.telephony.data.LinkBandwidthEstimator;
 import com.android.internal.telephony.data.PhoneSwitcher;
 import com.android.internal.telephony.domainselection.DomainSelectionResolver;
 import com.android.internal.telephony.emergency.EmergencyNumberTracker;
+import com.android.internal.telephony.emergency.EmergencyStateTracker;
 import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.imsphone.ImsExternalCallTracker;
 import com.android.internal.telephony.imsphone.ImsNrSaModeHandler;
@@ -270,6 +271,7 @@ public abstract class TelephonyTest {
     protected CellularNetworkSecuritySafetySource mSafetySource;
     protected CellularIdentifierDisclosureNotifier mIdentifierDisclosureNotifier;
     protected DomainSelectionResolver mDomainSelectionResolver;
+    protected EmergencyStateTracker mEmergencyStateTracker;
     protected NullCipherNotifier mNullCipherNotifier;
 
     // Initialized classes
@@ -504,7 +506,11 @@ public abstract class TelephonyTest {
         mIsimUiccRecords = Mockito.mock(IsimUiccRecords.class);
         mProxyController = Mockito.mock(ProxyController.class);
         mPhoneSwitcher = Mockito.mock(PhoneSwitcher.class);
-        mIActivityManagerSingleton = Mockito.mock(Singleton.class);
+        Field activityManagerSingletionField =
+                ActivityManager.class.getDeclaredField("IActivityManagerSingleton");
+        activityManagerSingletionField.setAccessible(true);
+        mIActivityManagerSingleton =
+                (Singleton<IActivityManager>) activityManagerSingletionField.get(null);
         mIActivityManager = Mockito.mock(IActivityManager.class);
         mIIntentSender = Mockito.mock(IIntentSender.class);
         mIBinder = Mockito.mock(IBinder.class);
@@ -559,6 +565,7 @@ public abstract class TelephonyTest {
         mSafetySource = Mockito.mock(CellularNetworkSecuritySafetySource.class);
         mIdentifierDisclosureNotifier = Mockito.mock(CellularIdentifierDisclosureNotifier.class);
         mDomainSelectionResolver = Mockito.mock(DomainSelectionResolver.class);
+        mEmergencyStateTracker = Mockito.mock(EmergencyStateTracker.class);
         mNullCipherNotifier = Mockito.mock(NullCipherNotifier.class);
 
         lenient().doReturn(true).when(mFeatureFlags).dataServiceNotifyImsDataNetwork();
@@ -574,6 +581,8 @@ public abstract class TelephonyTest {
         lenient().doReturn(true).when(mFeatureFlags)
                 .removeTetheringConditionWhenEnablingIndications();
         lenient().doReturn(true).when(mFeatureFlags).enableDataStallRecoveryRandomization();
+        lenient().doReturn(true).when(mFeatureFlags).adsRespectOwnersPreference();
+        lenient().doReturn(true).when(mFeatureFlags).allowNonStandaloneOpportunisticAdsPolicy();
 
         WorkerThread.reset();
         TelephonyManager.disableServiceHandleCaching();
@@ -938,6 +947,8 @@ public abstract class TelephonyTest {
         lenient().doReturn(false).when(mDomainSelectionResolver).isDomainSelectionSupported();
         DomainSelectionResolver.setDomainSelectionResolver(mDomainSelectionResolver);
 
+        replaceInstance(EmergencyStateTracker.class, "INSTANCE", null, mEmergencyStateTracker);
+
         //Use reflection to mock singletons
         replaceInstance(CallManager.class, "INSTANCE", null, mCallManager);
         replaceInstance(TelephonyComponentFactory.class, "sInstance", null,
@@ -947,8 +958,6 @@ public abstract class TelephonyTest {
                 mSubscriptionManagerService);
         replaceInstance(ProxyController.class, "sProxyController", null, mProxyController);
         replaceInstance(PhoneSwitcher.class, "sPhoneSwitcher", null, mPhoneSwitcher);
-        replaceInstance(ActivityManager.class, "IActivityManagerSingleton", null,
-                mIActivityManagerSingleton);
         replaceInstance(SimulatedCommandsVerifier.class, "sInstance", null,
                 mSimulatedCommandsVerifier);
         replaceInstance(Singleton.class, "mInstance", mIActivityManagerSingleton,
@@ -1037,6 +1046,7 @@ public abstract class TelephonyTest {
         mTestableLoopers.clear();
         mTestableLoopers = null;
         mTestableLooper = null;
+        mEmergencyStateTracker = null;
         DomainSelectionResolver.setDomainSelectionResolver(null);
     }
 
@@ -1048,7 +1058,6 @@ public abstract class TelephonyTest {
         // Normally, these two should suffice. But we're having some flakiness due to restored
         // instances being mocks...
         restoreInstance(Singleton.class, "mInstance", mIActivityManagerSingleton);
-        restoreInstance(ActivityManager.class, "IActivityManagerSingleton", null);
 
         // Copy-paste from android.app.ActivityManager.IActivityManagerSingleton
         Singleton<IActivityManager> amSingleton = new Singleton<IActivityManager>() {
@@ -1063,7 +1072,6 @@ public abstract class TelephonyTest {
         // ...so we're setting correct values explicitly, to be sure and not let the flake propagate
         // to other tests.
         replaceInstance(Singleton.class, "mInstance", mIActivityManagerSingleton, null);
-        replaceInstance(ActivityManager.class, "IActivityManagerSingleton", null, amSingleton);
     }
 
     public static class FakeBlockedNumberContentProvider extends MockContentProvider {

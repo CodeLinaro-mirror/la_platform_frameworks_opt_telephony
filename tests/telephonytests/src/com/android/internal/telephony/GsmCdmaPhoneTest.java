@@ -70,6 +70,7 @@ import android.os.UserManager;
 import android.os.WorkSource;
 import android.preference.PreferenceManager;
 import android.provider.DeviceConfig;
+import android.telecom.TelecomManager;
 import android.telecom.VideoProfile;
 import android.telephony.AccessNetworkConstants;
 import android.telephony.CarrierConfigManager;
@@ -3231,5 +3232,83 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
                 mTelephonyComponentFactory,
                 (c, p) -> mImsManager,
                 mFeatureFlags);
+    }
+
+    @Test
+    @SmallTest
+    public void testTtyModeBroadcast() throws Exception {
+        mPhoneUT.mCi = mMockCi;
+        replaceInstance(Phone.class, "mImsPhone", mPhoneUT, mImsPhone);
+
+        // Test ACTION_CURRENT_TTY_MODE_CHANGED
+        Intent intent = new Intent(TelecomManager.ACTION_CURRENT_TTY_MODE_CHANGED);
+        intent.putExtra(TelecomManager.EXTRA_CURRENT_TTY_MODE, TelephonyManager.TTY_MODE_FULL);
+        mContext.sendBroadcast(intent);
+        processAllMessages();
+
+        verify(mMockCi).setTTYMode(eq(Phone.TTY_MODE_FULL), nullable(Message.class));
+        verify(mImsPhone).setTTYMode(eq(Phone.TTY_MODE_FULL), nullable(Message.class));
+
+        // Test ACTION_TTY_PREFERRED_MODE_CHANGED
+        intent = new Intent(TelecomManager.ACTION_TTY_PREFERRED_MODE_CHANGED);
+        intent.putExtra(TelecomManager.EXTRA_TTY_PREFERRED_MODE, TelephonyManager.TTY_MODE_HCO);
+        mContext.sendBroadcast(intent);
+        processAllMessages();
+
+        verify(mImsPhone).setUiTTYMode(eq(Phone.TTY_MODE_FULL), nullable(Message.class));
+    }
+
+    private boolean getIsVoiceCapable(Phone phone) throws Exception {
+        java.lang.reflect.Field field = Phone.class.getDeclaredField("mIsVoiceCapable");
+        field.setAccessible(true);
+        return (boolean) field.get(phone);
+    }
+
+    @Test
+    public void testConstructor_offloadStartupBinderCalls_resourceTrue() throws Exception {
+        mContextFixture.putBooleanResource(com.android.internal.R.bool.config_voice_capable, true);
+        doReturn(true).when(mFeatureFlags).offloadStartupBinderCalls();
+        org.mockito.Mockito.clearInvocations(mTelephonyManager);
+
+        GsmCdmaPhone phone = new GsmCdmaPhone(mContext, mSimulatedCommands, mNotifier, true, 0,
+                PhoneConstants.PHONE_TYPE_GSM, mTelephonyComponentFactory, (c, p) -> mImsManager,
+                mFeatureFlags);
+
+        boolean isVoiceCapable = getIsVoiceCapable(phone);
+        assertTrue(isVoiceCapable);
+        // verify that TelephonyManager.isVoiceCapable() was NOT called
+        verify(mTelephonyManager, times(0)).isVoiceCapable();
+    }
+
+    @Test
+    public void testConstructor_offloadStartupBinderCalls_resourceFalse() throws Exception {
+        mContextFixture.putBooleanResource(com.android.internal.R.bool.config_voice_capable, false);
+        doReturn(true).when(mFeatureFlags).offloadStartupBinderCalls();
+        org.mockito.Mockito.clearInvocations(mTelephonyManager);
+
+        GsmCdmaPhone phone = new GsmCdmaPhone(mContext, mSimulatedCommands, mNotifier, true, 0,
+                PhoneConstants.PHONE_TYPE_GSM, mTelephonyComponentFactory, (c, p) -> mImsManager,
+                mFeatureFlags);
+
+        boolean isVoiceCapable = getIsVoiceCapable(phone);
+        assertFalse(isVoiceCapable);
+        // verify that TelephonyManager.isVoiceCapable() was NOT called
+        verify(mTelephonyManager, times(0)).isVoiceCapable();
+    }
+
+    @Test
+    public void testConstructor_noOffloadStartupBinderCalls() throws Exception {
+        doReturn(false).when(mFeatureFlags).offloadStartupBinderCalls();
+        doReturn(true).when(mTelephonyManager).isVoiceCapable();
+        org.mockito.Mockito.clearInvocations(mTelephonyManager);
+
+        GsmCdmaPhone phone = new GsmCdmaPhone(mContext, mSimulatedCommands, mNotifier, true, 0,
+                PhoneConstants.PHONE_TYPE_GSM, mTelephonyComponentFactory, (c, p) -> mImsManager,
+                mFeatureFlags);
+
+        boolean isVoiceCapable = getIsVoiceCapable(phone);
+        assertTrue(isVoiceCapable);
+        // verify that TelephonyManager.isVoiceCapable() WAS called
+        verify(mTelephonyManager, times(1)).isVoiceCapable();
     }
 }

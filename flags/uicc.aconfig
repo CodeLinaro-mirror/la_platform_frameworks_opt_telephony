@@ -1,7 +1,7 @@
 package: "com.android.internal.telephony.flags"
 container: "system"
 
-# OWNER=arunvoddu TARGET=24Q4
+# OWNER=arunvoddu TARGET=24Q4 USED_BY_APP=true
 flag {
     name: "carrier_restriction_status"
     is_exported: true
@@ -19,8 +19,7 @@ flag {
     bug:"318348580"
 }
 
-# Due to an external dependency, the flag is not being cleaned up here, even though it has been cleaned up in the framework.
-# OWNER=arunvoddu TARGET=24Q4
+# OWNER=arunvoddu TARGET=24Q4 USED_BY_APP=true
 flag {
     name: "set_carrier_restriction_status"
     namespace: "telephony"
@@ -91,17 +90,6 @@ flag {
     }
 }
 
-# OWNER=hyeinyu TARGET=26Q2
-flag {
-    name: "update_mcc_mnc_configuration_fix"
-    namespace: "telephony"
-    description: "This flag controls to update mccmncconfiguration only in case of default subscription."
-    bug:"468114043"
-    metadata {
-        purpose: PURPOSE_BUGFIX
-    }
-}
-
 # OWNER=rgreenwalt TARGET=26Q2
 flag {
     name: "new_sim_auth_permission"
@@ -127,4 +115,26 @@ flag {
     namespace: "telephony"
     description: "Add the CarrierIdentifier to the DownloadableSubscription"
     bug:"477378293"
+}
+
+# OWNER=stevestatia TARGET=26Q2
+flag {
+    name: "update_spn_display_name"
+    namespace: "telephony"
+    description: "This flag controls updating subscription display name when SPN is updated."
+    bug:"476250026"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+# OWNER=gargakash TARGET=26Q3
+flag {
+    name: "fix_pin_storage_deadlock"
+    namespace: "telephony"
+    description: "Fixes deadlock between PinStorage and UiccController by narrowing synchronization scope"
+    bug: "464075332"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
 }

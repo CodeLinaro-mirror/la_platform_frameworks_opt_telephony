@@ -333,6 +333,19 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                     }
                 }
 
+                boolean isLowBattery = (c != null) && (c.getCallProfile() != null) &&
+                        c.getCallProfile().getCallExtraBoolean(
+                        ImsCallProfile.EXTRA_LOW_BATTERY, false);
+                if (imsCall.isVideoCall() && isLowBattery
+                        && !mShouldAllowVtCallsInLowBattery) {
+                    if (DBG) {
+                        log("onIncomingCall : incoming video call auto rejected "
+                                + "due to low battery");
+                    }
+                    imsCall.reject(ImsReasonInfo.CODE_USER_DECLINE);
+                    conn.setDisconnectCause(DisconnectCause.INCOMING_AUTO_REJECTED);
+                }
+
                 mOperationLocalLog.log("onIncomingCall: isUnknown=" + isUnknown + ", connId="
                         + System.identityHashCode(conn));
 
@@ -1117,6 +1130,14 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
       * See {@link CarrierConfigManager#KEY_CARRIER_USSD_METHOD_INT} for more information.
       */
     private int mUssdMethod = USSD_OVER_CS_PREFERRED;
+
+    /**
+      * Carrier configuration option which specifies whether the carrier should allow incoming
+      * video call when the battery status in low.
+      * See {@link CarrierConfigManager#KEY_ALLOW_VIDEO_CALL_IN_LOW_BATTERY_BOOL}
+      * for more information.
+      */
+    private boolean mShouldAllowVtCallsInLowBattery = true;
 
     /**
      * TODO: Remove this code; it is a workaround.
@@ -1979,6 +2000,8 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                         .KEY_VOICE_RTP_INACTIVITY_TIME_THRESHOLD_MILLIS_LONG);
         mThresholdRtpJitter = carrierConfig.getInt(
                 CarrierConfigManager.ImsVoice.KEY_VOICE_RTP_JITTER_THRESHOLD_MILLIS_INT);
+        mShouldAllowVtCallsInLowBattery = carrierConfig.getBoolean(
+                CarrierConfigManager.KEY_ALLOW_VIDEO_CALL_IN_LOW_BATTERY_BOOL);
 
         if (mPhone.getContext().getResources().getBoolean(
                 com.android.internal.R.bool.config_allow_ussd_over_ims)) {
@@ -2411,6 +2434,15 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
      */
     public void unholdHeldCall() throws CallStateException {
         ImsCall imsCall = mBackgroundCall.getImsCall();
+        ImsCall fgImsCall = mForegroundCall.getImsCall();
+        // Check for a potentially bad state where a call is held due to a new call but the latter
+        // is disconnected immediately by the remote party, potentially leaving the fg call with a
+        // held state. In this case, we will need to unhold this fg call accordingly to recover.
+        if (mFeatureFlags.fixUnholdFgCall() && imsCall == null
+                && mForegroundCall.getState() == ImsPhoneCall.State.HOLDING) {
+            logi("Held call is in foreground. Unholding to recover from bad state.");
+            imsCall = fgImsCall;
+        }
         if (mHoldSwitchingState == HoldSwapState.PENDING_SINGLE_CALL_UNHOLD
                 || mHoldSwitchingState == HoldSwapState.SWAPPING_ACTIVE_AND_HELD) {
             logi("Ignoring unhold request while already unholding or swapping");
@@ -2420,7 +2452,10 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
             mCallExpectedToResume = imsCall;
             HoldSwapState oldHoldState = mHoldSwitchingState;
             mHoldSwitchingState = HoldSwapState.PENDING_SINGLE_CALL_UNHOLD;
-            mForegroundCall.switchWith(mBackgroundCall);
+            // Normal case where bg call is being unheld so it needs to swap with the fg.
+            if (!imsCall.equalsTo(fgImsCall)) {
+                mForegroundCall.switchWith(mBackgroundCall);
+            }
             logHoldSwapState("unholdCurrentCall");
             try {
                 imsCall.resume();
@@ -3932,9 +3967,13 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                         sendEmptyMessage(EVENT_ANSWER_WAITING_CALL);
                     }
                     mHoldSwitchingState = HoldSwapState.INACTIVE;
-                } else if (mPendingMO != null && mPendingMO.isEmergency()) {
+                } else if ((mPendingMO != null && mPendingMO.isEmergency()) || (mPendingMO == null
+                        && mForegroundCall.getFirstConnection() != null
+                        && mForegroundCall.getFirstConnection().isEmergency())) {
                     // If mPendingMO is an emergency call, disconnect the call that we tried to
-                    // hold.
+                    // hold. If mPendingMO is null, then we need to check if the foreground call is
+                    // an emergency call also; it's possible that onCallInitiating is already called
+                    // to process the pending MO call.
                     mBackgroundCall.getImsCall().terminate(ImsReasonInfo.CODE_UNSPECIFIED);
                     if (imsCall != mCallExpectedToResume) {
                         mCallExpectedToResume = null;
@@ -6288,5 +6327,10 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                 mImsManager.setWfcModeInternal(mImsManager.getWfcMode(isNetworkRoaming));
             }
         }
+    }
+
+    @VisibleForTesting
+    public void setShouldAllowVtCallsInLowBatteryForTesting(boolean result) {
+        mShouldAllowVtCallsInLowBattery = result;
     }
 }

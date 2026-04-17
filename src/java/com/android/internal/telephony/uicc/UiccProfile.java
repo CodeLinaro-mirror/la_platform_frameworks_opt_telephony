@@ -198,8 +198,9 @@ public class UiccProfile extends IccCard {
                 @Override
                 public void onCarrierConfigChanged(int logicalSlotIndex, int subscriptionId,
                         int carrierId, int specificCarrierId) {
-                    if (logicalSlotIndex == mPhoneId && SubscriptionManager.isValidSubscriptionId(
-                            subscriptionId) && carrierId > -1) {
+                    if (logicalSlotIndex == mPhoneId
+                            && SubscriptionManager.isValidSubscriptionId(subscriptionId)
+                            && subscriptionId == SubscriptionManager.getSubscriptionId(mPhoneId)) {
                         log("onCarrierConfigChanged: slotIndex = " + logicalSlotIndex
                                 + ", subId=" + subscriptionId + ", carrierId = " + carrierId);
                         handleCarrierNameOverride();
@@ -251,6 +252,13 @@ public class UiccProfile extends IccCard {
                         if (eventCode == SIMRecords.EVENT_SPN) {
                             mTelephonyManager.setSimOperatorNameForPhone(
                                     mPhoneId, mIccRecords.getServiceProviderName());
+                            if (mFlags.updateSpnDisplayName()) {
+                                int subId = SubscriptionManager.getSubscriptionId(mPhoneId);
+                                if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID){
+                                    updateCarrierNameForSubscription(subId,
+                                        SubscriptionManager.NAME_SOURCE_SIM_SPN);
+                                }
+                            }
                         }
                     }
                     break;
