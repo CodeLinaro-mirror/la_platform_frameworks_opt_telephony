@@ -1019,7 +1019,11 @@ public class PhoneSwitcher extends Handler {
     private boolean isInEmergencyMode() {
         if (isInEmergencyCallbackMode()) return true;
         if (DomainSelectionResolver.getInstance().isDomainSelectionSupported()) {
-            return EmergencyStateTracker.getInstance().isInEmergencyMode();
+            // If there is an active call, we are not in the restricted "emergency mode"
+            // that prevents DDS switching. This allows Auto Data Switch to function
+            // during the call.
+            return EmergencyStateTracker.getInstance().isInEmergencyMode()
+                    && !isAnyVoiceCallActiveOnDevice();
         }
         return false;
     }
@@ -1557,6 +1561,13 @@ public class PhoneSwitcher extends Handler {
 
         mPendingSwitchSubId = INVALID_SUBSCRIPTION_ID;
 
+        if (mFlags.adsRespectOwnersPreference()
+                && switchReason == DataSwitch.Reason.DATA_SWITCH_REASON_CBRS) {
+            logl("mOpportunisticSetDataSubId updated to " + subId);
+            // When setOpportunisticDataSubscription is called, update the persistent preference.
+            mOpportunisticSetDataSubId = subId;
+        }
+
         if (subIdToValidate == mPreferredDataSubId.get()) {
             if (subId == SubscriptionManager.DEFAULT_SUBSCRIPTION_ID) {
                 mAutoSelectedDataSubId = SubscriptionManager.DEFAULT_SUBSCRIPTION_ID;
@@ -1571,13 +1582,6 @@ public class PhoneSwitcher extends Handler {
                 switchReason);
         registerDefaultNetworkChangeCallback(subIdToValidate,
                 switchReason);
-
-        if (mFlags.adsRespectOwnersPreference()
-                && switchReason == DataSwitch.Reason.DATA_SWITCH_REASON_CBRS) {
-            logl("mOpportunisticSetDataSubId updated to " + subId);
-            // When setOpportunisticDataSubscription is called, update the persistent preference.
-            mOpportunisticSetDataSubId = subId;
-        }
 
         // If validation feature is not supported, set it directly. Otherwise,
         // start validation on the subscription first.

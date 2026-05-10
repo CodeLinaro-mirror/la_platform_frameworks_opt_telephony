@@ -928,26 +928,7 @@ public class SubscriptionManagerService extends ISub.Stub {
                      */
                     @Override
                     public void onSubscriptionChanged(int subId) {
-                        updateUserIdToAvailableSubs();
-
-                        mSubscriptionManagerServiceCallbacks.forEach(
-                                callback -> callback.invokeFromExecutor(
-                                        () -> callback.onSubscriptionChanged(subId)));
-
-                        MultiSimSettingController.getInstance().notifySubscriptionInfoChanged();
-
-                        TelephonyRegistryManager telephonyRegistryManager =
-                                mContext.getSystemService(TelephonyRegistryManager.class);
-                        if (telephonyRegistryManager != null) {
-                            telephonyRegistryManager.notifySubscriptionInfoChanged();
-                        }
-
-                        SubscriptionInfoInternal subInfo =
-                                mSubscriptionDatabaseManager.getSubscriptionInfoInternal(subId);
-                        if (subInfo != null && subInfo.isOpportunistic()
-                                && telephonyRegistryManager != null) {
-                            telephonyRegistryManager.notifyOpportunisticSubscriptionInfoChanged();
-                        }
+                        notifySubscriptionChanged(subId);
                     }
                 });
 
@@ -2571,6 +2552,34 @@ public class SubscriptionManagerService extends ISub.Stub {
                 .filter(subInfo -> subInfo.isActive() || iccIds.contains(subInfo.getIccId())
                         || (mEuiccManager != null && mEuiccManager.isEnabled()
                         && subInfo.isEmbedded()));
+    }
+
+    /**
+     * Notify that a subscription has changed.
+     *
+     * @param subId The subscription id.
+     */
+    private void notifySubscriptionChanged(int subId) {
+        updateUserIdToAvailableSubs();
+
+        mSubscriptionManagerServiceCallbacks.forEach(
+                callback -> callback.invokeFromExecutor(
+                        () -> callback.onSubscriptionChanged(subId)));
+
+        MultiSimSettingController.getInstance().notifySubscriptionInfoChanged();
+
+        TelephonyRegistryManager telephonyRegistryManager =
+                mContext.getSystemService(TelephonyRegistryManager.class);
+        if (telephonyRegistryManager != null) {
+            telephonyRegistryManager.notifySubscriptionInfoChanged();
+        }
+
+        SubscriptionInfoInternal subInfo =
+                mSubscriptionDatabaseManager.getSubscriptionInfoInternal(subId);
+        if (subInfo != null && subInfo.isOpportunistic()
+                && telephonyRegistryManager != null) {
+            telephonyRegistryManager.notifyOpportunisticSubscriptionInfoChanged();
+        }
     }
 
     /**
@@ -4559,7 +4568,12 @@ public class SubscriptionManagerService extends ISub.Stub {
      * for the current IMS session.
      */
     public void setImsNumberUpdateStatus(int subId, boolean success) {
-        mImsNumberUpdateStatus.put(subId, success);
+        Boolean oldStatus = mImsNumberUpdateStatus.put(subId, success);
+        if (oldStatus == null || oldStatus != success) {
+            log("setImsNumberUpdateStatus: subId=" + subId + " status changed to " + success
+                    + ". notifying.");
+            notifySubscriptionChanged(subId);
+        }
     }
 
     /**
@@ -4568,7 +4582,10 @@ public class SubscriptionManagerService extends ISub.Stub {
      * from a previous session.
      */
     public void clearImsNumberUpdateStatus(int subId) {
-        mImsNumberUpdateStatus.remove(subId);
+        if (mImsNumberUpdateStatus.remove(subId) != null) {
+            log("clearImsNumberUpdateStatus: subId=" + subId + ". notifying.");
+            notifySubscriptionChanged(subId);
+        }
     }
 
     /**
@@ -6290,8 +6307,21 @@ public class SubscriptionManagerService extends ISub.Stub {
 
     private boolean canManageSubscriptionAsUserInternal(@NonNull SubscriptionInfo subInfo,
             @NonNull String packageName, @NonNull UserHandle user) {
-        // iterate through the active "visible" subs, looking for one that matches
-        for (int subId : getActiveSubIdListAsUser(false, user)) {
+
+        // iterate through the visible subs for the current user or subs that are not assigned
+        // to any user, such as occurs on certain device types / user configurations.
+        // Yes, this approach seems ridiculous, but concatenating primitive arrays is ridiculous.
+        int[] subIdsForCurrentUser = getActiveSubIdListAsUser(
+                false /* visibleOnly */, user);
+        int[] subIdsForNullUser = getActiveSubIdListAsUser(
+                false /* visibleOnly */, new UserHandle(UserHandle.USER_NULL));
+        // Some day we should make a generic concatenate() method
+        int[] activeSubIds = new int[subIdsForCurrentUser.length + subIdsForNullUser.length];
+        System.arraycopy(subIdsForCurrentUser, 0, activeSubIds, 0, subIdsForCurrentUser.length);
+        System.arraycopy(subIdsForNullUser, 0, activeSubIds,
+                subIdsForCurrentUser.length, subIdsForNullUser.length);
+
+        for (int subId : activeSubIds) {
             TelephonyManager tm = mTelephonyManager.createForSubscriptionId(subId);
 
             final boolean hasCarrierPrivilegesOnSub =
