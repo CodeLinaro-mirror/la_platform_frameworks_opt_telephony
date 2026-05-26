@@ -127,6 +127,8 @@ public class CatService extends Handler implements AppInterface {
     private RilMessageDecoder mMsgDecoder = null;
     @UnsupportedAppUsage
     private boolean mStkAppInstalled = false;
+    private boolean mSupportSendUssd = false;
+    private boolean mSupportSetUpCall = false;
 
     @UnsupportedAppUsage
     private UiccController mUiccController;
@@ -185,6 +187,20 @@ public class CatService extends Handler implements AppInterface {
         mContext = context;
         mSlotId = slotId;
         mFeatureFlags = featureFlags;
+        try {
+            mSupportSendUssd = mContext.getResources().getBoolean(
+                    com.android.internal.R.bool.config_stk_send_ussd_by_telephony);
+        } catch (NotFoundException e) {
+            CatLog.e(this, "config_stk_send_ussd_by_telephony resource is not found");
+        }
+        try {
+            mSupportSetUpCall = mContext.getResources().getBoolean(
+                    com.android.internal.R.bool.config_stk_set_up_call_by_telephony);
+        } catch (NotFoundException e) {
+            CatLog.e(this, "config_stk_set_up_call_by_telephony resource is not found");
+        }
+        CatLog.d(this, "Support SEND USSD:" + mSupportSendUssd
+                + " Support SET UP CALL:" + mSupportSetUpCall);
 
         // Get the RilMessagesDecoder for decoding the messages.
         mMsgDecoder = RilMessageDecoder.getInstance(this, fh, context, slotId);
@@ -584,7 +600,7 @@ public class CatService extends Handler implements AppInterface {
                 }
                 break;
             case SEND_USSD:
-                if (Flags.supportStkCommandUssdAndCall()) {
+                if (mSupportSendUssd && Flags.supportStkCommandUssdAndCall()) {
                     sendUssd(cmdParams.mCmdDet,
                             ((SendUssdParams) cmdParams).mUssdString,
                             ((SendUssdParams) cmdParams).mCodingScheme);
@@ -1401,7 +1417,7 @@ public class CatService extends Handler implements AppInterface {
                         mCurrntCmd = null;
                         return;
                     case SET_UP_CALL:
-                        if (Flags.supportStkCommandUssdAndCall()) {
+                        if (mSupportSetUpCall && Flags.supportStkCommandUssdAndCall()) {
                             if (mSetUpCallHandler != null) {
                                 CatLog.d(this, "Already handling another command");
                                 sendTerminalResponse(
@@ -1455,12 +1471,13 @@ public class CatService extends Handler implements AppInterface {
                 break;
             case BACKWARD_MOVE_BY_USER:
             case USER_NOT_ACCEPT:
+                // if the user dismissed the alert dialog for a
+                // setup call/open channel, consider that as the user
+                // rejecting the call. Use dedicated API for this, rather than
+                // sending a terminal response.
                 if (Flags.supportStkCommandUssdAndCall()) {
-                    // if the user dismissed the alert dialog for a
-                    // open channel, consider that as the user
-                    // rejecting the call. Use dedicated API for this, rather than
-                    // sending a terminal response.
-                    if (type == CommandType.OPEN_CHANNEL) {
+                    if ((type == CommandType.SET_UP_CALL && !mSupportSetUpCall)
+                            || type == CommandType.OPEN_CHANNEL) {
                         mCmdIf.handleCallSetupRequestFromSim(false, null);
                         mCurrntCmd = null;
                         return;
@@ -1468,10 +1485,6 @@ public class CatService extends Handler implements AppInterface {
                         resp = null;
                     }
                 } else {
-                    // if the user dismissed the alert dialog for a
-                    // setup call/open channel, consider that as the user
-                    // rejecting the call. Use dedicated API for this, rather than
-                    // sending a terminal response.
                     if (type == CommandType.SET_UP_CALL || type == CommandType.OPEN_CHANNEL) {
                         mCmdIf.handleCallSetupRequestFromSim(false, null);
                         mCurrntCmd = null;
@@ -1482,22 +1495,17 @@ public class CatService extends Handler implements AppInterface {
                 }
                 break;
             case NO_RESPONSE_FROM_USER:
-                if (Flags.supportStkCommandUssdAndCall()) {
-                    if (type == CommandType.SET_UP_CALL) {
-                        sendTerminalResponse(cmdDet, ResultCode.USER_NOT_ACCEPT, false, 0, null);
-                        mCurrntCmd = null;
-                        return;
-                    }
-                    resp = null;
-                    break;
-                } else {
-                    // No need to send terminal response for SET UP CALL on user timeout,
-                    // instead use dedicated API
-                    if (type == CommandType.SET_UP_CALL) {
+                if (type == CommandType.SET_UP_CALL) {
+                    if (mSupportSetUpCall && Flags.supportStkCommandUssdAndCall()) {
+                        sendTerminalResponse(
+                                cmdDet, ResultCode.USER_NOT_ACCEPT, false, 0, null);
+                    } else {
+                        // No need to send terminal response for SET UP CALL on user timeout,
+                        // instead use dedicated API
                         mCmdIf.handleCallSetupRequestFromSim(false, null);
-                        mCurrntCmd = null;
-                        return;
                     }
+                    mCurrntCmd = null;
+                    return;
                 }
             case UICC_SESSION_TERM_BY_USER:
                 resp = null;
@@ -1623,7 +1631,16 @@ public class CatService extends Handler implements AppInterface {
                     }
                 };
 
+        SubscriptionInfo subInfo = getSubscriptionInfo(mSlotId);
+        if (subInfo == null
+                || subInfo.getSubscriptionId() == SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+            CatLog.e(this, "Invalid subscription info");
+            sendTerminalResponse(cmdDet, ResultCode.TERMINAL_CRNTLY_UNABLE_TO_PROCESS,
+                    false, 0x00, null);
+            return;
+        }
         mContext.getSystemService(TelephonyManager.class)
+                .createForSubscriptionId(subInfo.getSubscriptionId())
                 .sendUssdRequest(request, ussdCallback, null);
     }
 }
