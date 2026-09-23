@@ -1078,8 +1078,9 @@ public class ImsPhone extends ImsPhoneBase {
         // Get the CLIR info if needed
         imsDialArgsBuilder.setClirMode(mCT.getClirMode());
         ImsDialArgs imsDialArgs = imsDialArgsBuilder.build();
+
         // handle in-call MMI first if applicable
-        if (handleInCallMmiCommandsInternal(newDialString, imsDialArgs.deferDial)) {
+        if (wrappedCallback == null && handleInCallMmiCommandsInternal(newDialString, imsDialArgs.deferDial)) {
             return null;
         }
 
