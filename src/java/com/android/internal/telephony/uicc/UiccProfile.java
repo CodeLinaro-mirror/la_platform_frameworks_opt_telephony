@@ -267,6 +267,10 @@ public class UiccProfile extends IccCard {
 
                 case EVENT_CARRIER_PRIVILEGES_LOADED:
                     if (VDBG) log("handleMessage: EVENT_CARRIER_PRIVILEGES_LOADED");
+                    if (getCarrierPrivilegeRules() == null) {
+                        log("Ignore stale EVENT_CARRIER_PRIVILEGES_LOADED message");
+                        break;
+                    }
                     Phone phone = PhoneFactory.getPhone(mPhoneId);
                     if (phone != null) {
                         CarrierPrivilegesTracker cpt = phone.getCarrierPrivilegesTracker();
